@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Toxic Comment & Fairness Monitor</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>🎯 Real-Time Toxic Comment Detection — Fairness Monitor</h1>
+</header>
+
+<div class="control-bar">
+  <input type="text" id="videoUrlInput" placeholder="Paste any YouTube video URL here...">
+  <button id="goBtn">▶ Go</button>
+  <span id="statusText" class="status-text"></span>
+</div>
+
+<div class="layout">
+
+  <div class="left-panel">
+    <div class="video-wrapper">
+  <iframe id="ytFrame" src="" frameborder="0" allowfullscreen></iframe>
+</div>
+<p class="watch-link" id="watchLink" style="display:none;">
+  <a id="watchLinkHref" href="#" target="_blank">▶ If the video doesn't play, watch it directly on YouTube</a>
+</p>
+
+    <div class="card" id="videoInfoCard" style="display:none;">
+      <h2 id="videoTitle"></h2>
+      <p class="video-sub" id="videoSub"></p>
+    </div>
+
+    <div class="card">
+      <h2>📊 Live Fairness Summary</h2>
+      <div class="metrics">
+        <div class="metric">
+          <span class="metric-value" id="totalCount">0</span>
+          <span class="metric-label">Total scored</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value" id="toxicityRate">0%</span>
+          <span class="metric-label">Toxicity rate</span>
+        </div>
+        <div class="metric">
+          <span class="metric-value" id="identityCount">0</span>
+          <span class="metric-label">Identity mentions</span>
+        </div>
+      </div>
+
+      <h3>Toxicity rate by identity group</h3>
+      <div id="identityChart" class="identity-chart"></div>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <h2>💬 Live Comments</h2>
+
+    <div class="filter-bar">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="toxic">🔴 Toxic only</button>
+      <button class="filter-btn" data-filter="clean">🟢 Clean only</button>
+    </div>
+
+    <div id="commentCount" class="comment-count">0 comments</div>
+
+    <div id="commentFeed" class="comment-feed">
+      <p style="color:#7c7f91; font-size:0.85rem;">Paste a video URL above and click Go to start.</p>
+    </div>
+  </div>
+
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,7 +1,15 @@
-pandas
-numpy
-scikit-learn
-joblib
-matplotlib
-seaborn
-fairlearn
+# Core Machine Learning & Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+joblib>=1.3.0
+
+# Web Application Framework
+flask>=3.0.0
+
+# Official YouTube Data API Client
+google-api-python-client>=2.100.0
+
+# Testing & Quality Assurance
+pytest>=8.0.0

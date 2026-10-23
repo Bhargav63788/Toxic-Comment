@@ -1,1 +1,31 @@
-train.csv
+# Python environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+
+# Data files (raw and processed datasets should not be committed to Git)
+data/
+*.csv
+*.csv.gz
+*.tsv
+*.parquet
+
+# IDE and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Temporary and log files
+*.log

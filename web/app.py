@@ -1,276 +1,289 @@
 """
 web/app.py
 
-All-in-one Flask backend:
-  - Serves the dashboard page
-  - Runs a background thread that polls YouTube comments for
-    whichever video the user pastes in, and scores them live
-  - Auto-recovers from network errors instead of crashing
-  - /api/start lets the browser change which video is being watched
-
-Run:
-  python web/app.py
-Then open:
-  http://127.0.0.1:5000
+Flask backend for the YouTube Toxic Comment Analyzer.
+Provides:
+  - Single-Page Application interface
+  - YouTube video comment fetching and multi-label toxicity analysis (/api/analyze_youtube)
+  - Single-comment inference endpoint (/api/predict)
+  - Model metadata and held-out test evaluation metrics (/api/model_info)
+  - System health check (/api/health)
+  - Secure API key handling via environment variables or ephemeral request parameter
 """
 
 import os
-import re
-import csv
+import sys
+import json
 import time
-import threading
-from datetime import datetime
+from typing import Dict, Any
+from flask import Flask, request, jsonify, render_template
 
-import joblib
-import pandas as pd
-from flask import Flask, jsonify, render_template, request
-from googleapiclient.discovery import build
+# Automatically load environment variables from project .env
+def load_env_file():
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    if os.path.isfile(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                if key and key not in os.environ:
+                    os.environ[key] = val
 
-BASE_DIR = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "toxicity_model_mitigated.pkl")
-VECTORIZER_PATH = os.path.join(BASE_DIR, "..", "models", "tfidf_vectorizer_mitigated.pkl")
-CSV_PATH = os.path.join(BASE_DIR, "..", "dashboard", "live_predictions.csv")
-POLL_INTERVAL = 15
+load_env_file()
 
-DEFAULT_API_KEY = "AIzaSyC18uJp6Vxa7zSBGHL72m9FPUaFQ7aQqNM"
+# Add project root to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from src.predict import load_model_artifacts, predict_comment
+from src.preprocessing import validate_input_comment, DEFAULT_LABELS
+from src.youtube_analyzer import (
+    extract_video_id,
+    fetch_youtube_comments_and_meta,
+    analyze_youtube_comments
+)
 
-IDENTITY_KEYWORDS = {
-    "female": ["woman", "women", "girl", "she", "her", "female"],
-    "male": ["man", "men", "boy", "he", "him", "male"],
-    "muslim": ["muslim", "islam", "islamic"],
-    "christian": ["christian", "christianity", "catholic"],
-    "jewish": ["jewish", "jew", "judaism"],
-    "homosexual_gay_or_lesbian": ["gay", "lesbian", "homosexual", "lgbt"],
-    "black": ["black person", "black people", "african american"],
-    "white": ["white person", "white people"],
-    "psychiatric_or_mental_illness": ["mental illness", "depression", "schizophrenia", "psychiatric"],
-}
+app = Flask(
+    __name__,
+    template_folder="templates",
+    static_folder="static"
+)
+app.config["JSON_SORT_KEYS"] = False
 
-app = Flask(__name__)
-
-print("Loading trained model ...")
-model = joblib.load(MODEL_PATH)
-vectorizer = joblib.load(VECTORIZER_PATH)
-print("Model loaded.")
-
-# ---------------- Global live state ----------------
-state = {
-    "video_id": None,
-    "api_key": None,
-    "seen_ids": set(),
-    "status": "idle",   # idle | polling | error
-    "last_error": None,
-}
-state_lock = threading.Lock()
-
-
-def extract_video_id(url_or_id):
-    url_or_id = url_or_id.strip()
-    patterns = [
-        r"(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})",
-    ]
-    for pat in patterns:
-        m = re.search(pat, url_or_id)
-        if m:
-            return m.group(1)
-    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_id):
-        return url_or_id
-    return None
-
-
-def clean_text(text):
-    text = str(text).lower()
-    text = re.sub(r"http\S+|www\.\S+", " ", text)
-    text = re.sub(r"[^a-z\s']", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def detect_identities(text):
-    text_lower = text.lower()
-    flags = []
-    for identity, keywords in IDENTITY_KEYWORDS.items():
-        if any(re.search(rf"\b{re.escape(k)}\b", text_lower) for k in keywords):
-            flags.append(identity)
-    return flags
-
-
-def ensure_csv():
-    if not os.path.exists(CSV_PATH):
-        os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-        with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                "comment_id", "video_id", "author", "text", "clean_text",
-                "toxicity_prob", "is_toxic", "identity_flags", "scored_at",
-            ])
-
-
-def background_poller():
-    ensure_csv()
-    while True:
-        with state_lock:
-            video_id = state["video_id"]
-            api_key = state["api_key"]
-
-        if not video_id or not api_key:
-            time.sleep(2)
-            continue
-
-        try:
-            youtube = build("youtube", "v3", developerKey=api_key)
-            response = youtube.commentThreads().list(
-                part="snippet", videoId=video_id, maxResults=50,
-                order="time", textFormat="plainText",
-            ).execute()
-
-            new_count = 0
-            for item in response.get("items", []):
-                comment_id = item["snippet"]["topLevelComment"]["id"]
-                with state_lock:
-                    if video_id != state["video_id"]:
-                        break  # user switched videos mid-fetch
-                    if comment_id in state["seen_ids"]:
-                        continue
-                    state["seen_ids"].add(comment_id)
-
-                snippet = item["snippet"]["topLevelComment"]["snippet"]
-                raw_text = snippet.get("textDisplay", "")
-                cleaned = clean_text(raw_text)
-
-                vec = vectorizer.transform([cleaned])
-                toxicity_prob = float(model.predict_proba(vec)[0, 1])
-                is_toxic = toxicity_prob >= 0.5
-                identity_flags = detect_identities(raw_text)
-
-                with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        comment_id, video_id, snippet.get("authorDisplayName"),
-                        raw_text, cleaned, round(toxicity_prob, 4), is_toxic,
-                        ",".join(identity_flags), datetime.utcnow().isoformat(),
-                    ])
-                new_count += 1
-
-            with state_lock:
-                state["status"] = "polling"
-                state["last_error"] = None
-            print(f"[{datetime.utcnow().isoformat()}] Scored {new_count} new comments for {video_id}")
-
-        except Exception as e:
-            with state_lock:
-                state["status"] = "error"
-                state["last_error"] = str(e)
-            print(f"Polling error (will retry): {e}")
-
-        time.sleep(POLL_INTERVAL)
+# Load model artifacts once during startup
+print("Initializing YouTube Toxic Comment Analyzer backend ...")
+MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
+try:
+    ARTIFACTS = load_model_artifacts(model_dir=MODEL_DIR)
+    print(f"Loaded model artifacts successfully from {MODEL_DIR}")
+    print(f"Supported labels: {ARTIFACTS['labels']}")
+except Exception as e:
+    print(f"Warning: Failed to load model artifacts: {e}")
+    ARTIFACTS = None
 
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    """Serve the single-page YouTube Toxic Comment Analyzer interface."""
+    has_env_key = bool(os.environ.get("YOUTUBE_API_KEY", "").strip())
+    return render_template("index.html", has_env_key=has_env_key)
 
 
-@app.route("/api/start", methods=["POST"])
-def api_start():
-    data = request.get_json(force=True)
+@app.route("/api/health", methods=["GET"])
+def health():
+    """Health check endpoint."""
+    model_ready = ARTIFACTS is not None
+    has_api_key = bool(os.environ.get("YOUTUBE_API_KEY", "").strip())
+    return jsonify({
+        "status": "healthy" if model_ready else "degraded",
+        "model_loaded": model_ready,
+        "youtube_api_key_configured": has_api_key,
+        "labels": ARTIFACTS["labels"] if model_ready else [],
+        "server_time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }), 200 if model_ready else 503
+
+
+@app.route("/api/analyze_youtube", methods=["POST"])
+def analyze_youtube():
+    """
+    Main workflow endpoint:
+      1. Receives YouTube URL or Video ID
+      2. Validates URL and extracts 11-char video ID
+      3. Fetches accessible comments via official YouTube Data API v3
+      4. Runs multi-label toxicity inference on every comment
+      5. Computes exact counts and percentages
+      6. Returns structured results
+    """
+    if ARTIFACTS is None:
+        return jsonify({
+            "status": "error",
+            "message": "Model artifacts are not loaded on server. Please train the model first."
+        }), 503
+
+    if not request.is_json:
+        return jsonify({
+            "status": "error",
+            "message": "Request payload must be application/json."
+        }), 400
+
+    data = request.get_json(silent=True) or {}
     url_or_id = data.get("url", "")
+    api_key_override = data.get("api_key", "").strip() or None
+    raw_max = data.get("max_comments")
+    if raw_max is None or str(raw_max).strip().lower() in ("", "none", "null", "all", "max"):
+        max_comments = 5000
+    else:
+        try:
+            max_comments = int(raw_max)
+            if max_comments <= 0:
+                max_comments = 5000
+        except (ValueError, TypeError):
+            max_comments = 5000
+    include_replies = bool(data.get("include_replies", True))
 
+    if not url_or_id or not str(url_or_id).strip():
+        return jsonify({
+            "status": "error",
+            "message": "Please enter a valid YouTube video URL or ID."
+        }), 400
+
+    # 1. Validate URL and extract video ID
     video_id = extract_video_id(url_or_id)
     if not video_id:
-        return jsonify({"ok": False, "error": "Could not find a valid video ID in that link."}), 400
-
-    with state_lock:
-        state["video_id"] = video_id
-        state["api_key"] = DEFAULT_API_KEY
-        state["seen_ids"] = set()
-        state["status"] = "polling"
-        state["last_error"] = None
-
-    return jsonify({"ok": True, "video_id": video_id})
-
-
-@app.route("/api/data")
-def api_data():
-    with state_lock:
-        active_video_id = state["video_id"]
-        status = state["status"]
-        last_error = state["last_error"]
-
-    if not active_video_id or not os.path.exists(CSV_PATH):
         return jsonify({
-            "total": 0, "toxicity_rate": 0, "identity_count": 0,
-            "video_id": active_video_id, "comments": [], "identity_rates": [],
-            "status": status, "last_error": last_error,
-        })
+            "status": "error",
+            "message": (
+                "Invalid YouTube URL. Please enter a valid video link, such as: "
+                "https://www.youtube.com/watch?v=... or https://youtu.be/..."
+            )
+        }), 400
 
-    df = pd.read_csv(CSV_PATH)
-    df["identity_flags"] = df["identity_flags"].fillna("")
-    df = df[df["video_id"] == active_video_id]
+    # 2. Fetch comments and video metadata
+    t_start = time.perf_counter()
+    comments, video_meta, err_msg = fetch_youtube_comments_and_meta(
+        video_id=video_id,
+        api_key=api_key_override,
+        max_comments=max_comments,
+        include_replies=include_replies,
+        use_demo_if_missing_key=True
+    )
 
-    filter_mode = request.args.get("filter", "all")
-    total = len(df)
-    toxicity_rate = round(float(df["is_toxic"].mean()) * 100, 1) if total else 0
-    identity_count = int((df["identity_flags"] != "").sum())
+    if err_msg:
+        # If comments are disabled, return clean success with 0 comments and creator notification
+        if "comments are disabled" in err_msg.lower():
+            return jsonify({
+                "status": "success",
+                "video_id": video_id,
+                "video_meta": video_meta,
+                "total_analyzed": 0,
+                "toxic_count": 0,
+                "non_toxic_count": 0,
+                "toxic_percentage": 0.0,
+                "non_toxic_percentage": 0.0,
+                "category_counts": {l: 0 for l in DEFAULT_LABELS},
+                "comments": [],
+                "latency_ms": round((time.perf_counter() - t_start) * 1000, 1),
+                "disclaimer": "Comments are disabled on this YouTube video by the creator."
+            }), 200
 
-    view_df = df.sort_values("scored_at", ascending=False)
-    if filter_mode == "toxic":
-        view_df = view_df[view_df["is_toxic"] == True]
-    elif filter_mode == "clean":
-        view_df = view_df[view_df["is_toxic"] == False]
+        # Check other error types
+        status_code = 400
+        if "quota" in err_msg.lower():
+            status_code = 429
+        elif "not configured" in err_msg.lower() or "invalid" in err_msg.lower():
+            status_code = 401 if "invalid" in err_msg.lower() else 400
 
-    comments = view_df.head(50)[[
-        "author", "text", "toxicity_prob", "is_toxic", "identity_flags", "scored_at"
-    ]].to_dict(orient="records")
+        return jsonify({
+            "status": "error",
+            "message": err_msg,
+            "video_id": video_id,
+            "video_meta": video_meta
+        }), status_code
 
-    exploded = df.assign(identity_flags=df["identity_flags"].str.split(",")).explode("identity_flags")
-    exploded = exploded[exploded["identity_flags"].fillna("") != ""]
-    identity_rates = []
-    if not exploded.empty:
-        grouped = exploded.groupby("identity_flags")["is_toxic"].mean().sort_values(ascending=False)
-        identity_rates = [{"identity": k, "rate": round(float(v) * 100, 1)} for k, v in grouped.items()]
+    # 3. Analyze comments through trained ML model
+    analysis_result = analyze_youtube_comments(comments, ARTIFACTS)
+    latency_ms = round((time.perf_counter() - t_start) * 1000, 1)
+
+    total_analyzed = analysis_result["total_analyzed"]
+    raw_total_comments = video_meta.get("total_comment_count")
+    total_on_video = None
+    if raw_total_comments is not None:
+        try:
+            total_on_video = int(raw_total_comments)
+        except (ValueError, TypeError):
+            total_on_video = None
+
+    if total_analyzed == 0:
+        disclaimer = "This video currently has 0 public comments to analyze."
+    elif total_on_video is not None and total_on_video <= total_analyzed:
+        disclaimer = f"Analyzed all {total_analyzed:,} available comments on this video (100% complete dataset)."
+    elif total_on_video is not None:
+        disclaimer = f"Analyzed {total_analyzed:,} comments out of ~{total_on_video:,} total comments on YouTube."
+    else:
+        disclaimer = f"Analyzed {total_analyzed:,} comments successfully retrieved via YouTube Data API."
 
     return jsonify({
-        "total": total,
-        "toxicity_rate": toxicity_rate,
-        "identity_count": identity_count,
-        "video_id": active_video_id,
-        "comments": comments,
-        "identity_rates": identity_rates,
-        "status": status,
-        "last_error": last_error,
-    })
+        "status": "success",
+        "video_id": video_id,
+        "video_meta": video_meta,
+        "total_analyzed": total_analyzed,
+        "toxic_count": analysis_result["toxic_count"],
+        "non_toxic_count": analysis_result["non_toxic_count"],
+        "toxic_percentage": analysis_result["toxic_percentage"],
+        "non_toxic_percentage": analysis_result["non_toxic_percentage"],
+        "category_counts": analysis_result["category_counts"],
+        "comments": analysis_result["analyzed_comments"],
+        "latency_ms": latency_ms,
+        "disclaimer": disclaimer
+    }), 200
 
 
-@app.route("/api/video_meta")
-def api_video_meta():
-    with state_lock:
-        video_id = state["video_id"]
-        api_key = state["api_key"]
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    """Single-comment prediction endpoint."""
+    if ARTIFACTS is None:
+        return jsonify({"status": "error", "message": "Model not loaded."}), 503
 
-    if not video_id or not api_key:
-        return jsonify({})
+    if not request.is_json:
+        return jsonify({"status": "error", "message": "JSON payload required."}), 400
 
-    try:
-        youtube = build("youtube", "v3", developerKey=api_key)
-        resp = youtube.videos().list(part="snippet,statistics", id=video_id).execute()
-        items = resp.get("items", [])
-        if not items:
-            return jsonify({})
-        snippet = items[0]["snippet"]
-        stats = items[0].get("statistics", {})
-        return jsonify({
-            "title": snippet.get("title"),
-            "description": snippet.get("description", ""),
-            "channel": snippet.get("channelTitle"),
-            "views": stats.get("viewCount"),
-            "likes": stats.get("likeCount"),
-        })
-    except Exception:
-        return jsonify({})
+    data = request.get_json(silent=True) or {}
+    raw_text = data.get("text")
+    is_valid, err_msg = validate_input_comment(raw_text, max_chars=5000)
+    if not is_valid:
+        status_code = 413 if "exceeds maximum" in err_msg.lower() else 400
+        return jsonify({"status": "error", "message": err_msg}), status_code
+
+    result = predict_comment(raw_text, artifacts=ARTIFACTS)
+    return jsonify(result), 200
+
+
+@app.route("/api/model_info", methods=["GET"])
+def model_info():
+    """Return model metadata and test evaluation metrics."""
+    eval_json_path = os.path.join(MODEL_DIR, "evaluation_metrics.json")
+    meta_json_path = os.path.join(MODEL_DIR, "model_metadata.json")
+
+    eval_data = {}
+    if os.path.exists(eval_json_path):
+        try:
+            with open(eval_json_path, "r", encoding="utf-8") as f:
+                eval_data = json.load(f)
+        except Exception:
+            pass
+
+    meta_data = {}
+    if os.path.exists(meta_json_path):
+        try:
+            with open(meta_json_path, "r", encoding="utf-8") as f:
+                meta_data = json.load(f)
+        except Exception:
+            pass
+
+    return jsonify({
+        "status": "success",
+        "dataset": {
+            "name": "Jigsaw Toxic Comment Classification Challenge",
+            "primary_source": "https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge/data",
+            "mirror_source": "https://huggingface.co/datasets/Heliosoph/Jigsaw-Toxic-Comments",
+            "documentation": "https://huggingface.co/datasets/google/jigsaw_toxicity_pred",
+            "training_samples": meta_data.get("train_samples", 135620),
+            "held_out_test_samples": eval_data.get("test_sample_count", 63613),
+            "labels": DEFAULT_LABELS
+        },
+        "model_architecture": {
+            "vectorizer": "TF-IDF (1-2 N-grams, Sublinear TF, 40,000 Max Features)",
+            "classifiers": "One-vs-Rest Calibrated Logistic Regression (L-BFGS, C=2.0)",
+            "decision_thresholds": meta_data.get("optimal_thresholds", {})
+        },
+        "evaluation_metrics": eval_data
+    }), 200
 
 
 if __name__ == "__main__":
-    poller_thread = threading.Thread(target=background_poller, daemon=True)
-    poller_thread.start()
-    app.run(debug=False, port=5000)
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", 5000))
+    print(f"Starting YouTube Toxic Comment Analyzer at http://{host}:{port} ...")
+    app.run(host=host, port=port, debug=False)

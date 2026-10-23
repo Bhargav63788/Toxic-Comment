@@ -1,0 +1,98 @@
+{
+  "model_name": "Contextual-TfIdf-LogisticRegression-MultiLabel",
+  "labels": [
+    "toxic",
+    "severe_toxic",
+    "obscene",
+    "threat",
+    "insult",
+    "identity_hate"
+  ],
+  "optimal_thresholds": {
+    "toxic": 0.35,
+    "severe_toxic": 0.22,
+    "obscene": 0.28,
+    "threat": 0.2,
+    "insult": 0.3,
+    "identity_hate": 0.27
+  },
+  "default_threshold": 0.5,
+  "vectorizer_config": {
+    "max_features": 45000,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "sublinear_tf": true,
+    "min_df": 3,
+    "vocab_size": 45000
+  },
+  "classifier_config": {
+    "algorithm": "LogisticRegression",
+    "C": 2.0,
+    "solver": "lbfgs",
+    "random_state": 42
+  },
+  "validation_metrics": {
+    "toxic": {
+      "threshold": 0.35,
+      "precision": 0.8914,
+      "recall": 0.6524,
+      "f1": 0.7534,
+      "roc_auc": 0.9677,
+      "positive_count_val": 2290,
+      "train_duration_sec": 1.67
+    },
+    "severe_toxic": {
+      "threshold": 0.22,
+      "precision": 0.4609,
+      "recall": 0.5068,
+      "f1": 0.4828,
+      "roc_auc": 0.98,
+      "positive_count_val": 221,
+      "train_duration_sec": 1.44
+    },
+    "obscene": {
+      "threshold": 0.28,
+      "precision": 0.8544,
+      "recall": 0.7307,
+      "f1": 0.7877,
+      "roc_auc": 0.98,
+      "positive_count_val": 1229,
+      "train_duration_sec": 2.2
+    },
+    "threat": {
+      "threshold": 0.2,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.8879,
+      "positive_count_val": 70,
+      "train_duration_sec": 0.64
+    },
+    "insult": {
+      "threshold": 0.3,
+      "precision": 0.744,
+      "recall": 0.637,
+      "f1": 0.6863,
+      "roc_auc": 0.9753,
+      "positive_count_val": 1168,
+      "train_duration_sec": 1.54
+    },
+    "identity_hate": {
+      "threshold": 0.27,
+      "precision": 0.5149,
+      "recall": 0.2587,
+      "f1": 0.3444,
+      "roc_auc": 0.9521,
+      "positive_count_val": 201,
+      "train_duration_sec": 1.0
+    }
+  },
+  "validation_macro_f1": 0.5091,
+  "validation_macro_roc_auc": 0.9572,
+  "train_samples": 135620,
+  "val_samples": 23933,
+  "trained_at_utc": "2026-10-22T11:47:27.411155",
+  "total_train_time_sec": 57.59
+}

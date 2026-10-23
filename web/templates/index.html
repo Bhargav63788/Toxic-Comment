@@ -1,77 +1,232 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<title>Toxic Comment & Fairness Monitor</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7fb">
+  <title>YouTube Toxic Comment Analyzer</title>
+  <meta name="description"
+    content="Analyze up to 5,000 YouTube comments per video for toxic language using contextual machine learning NLP models.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css?v=5">
 </head>
+
 <body>
+  <main class="page">
+    <header class="heading">
+      <p class="eyebrow">YouTube Toxic Comment Detection</p>
+      <h1>YouTube Toxic Comment Analyzer</h1>
+    </header>
 
-<header class="topbar">
-  <h1>🎯 Real-Time Toxic Comment Detection — Fairness Monitor</h1>
-</header>
+    <!-- Main Link Input Form -->
+    <form class="link-form" id="video-form" novalidate onsubmit="event.preventDefault(); startAnalysis();">
+      <input id="video-url" type="url" autocomplete="off"
+        placeholder="Paste a YouTube video link (e.g., https://www.youtube.com/watch?v=... or https://youtu.be/...)"
+        aria-label="YouTube video link" required>
+      <button type="submit" id="submit-btn">
+        <span id="btn-text">Analyze comments</span>
+      </button>
+    </form>
 
-<div class="control-bar">
-  <input type="text" id="videoUrlInput" placeholder="Paste any YouTube video URL here...">
-  <button id="goBtn">▶ Go</button>
-  <span id="statusText" class="status-text"></span>
-</div>
+    <!-- Status message -->
+    <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
 
-<div class="layout">
+    <!-- Two-Column Layout -->
+    <section class="columns" aria-label="Video preview and comment analysis">
 
-  <div class="left-panel">
-    <div class="video-wrapper">
-  <iframe id="ytFrame" src="" frameborder="0" allowfullscreen></iframe>
-</div>
-<p class="watch-link" id="watchLink" style="display:none;">
-  <a id="watchLinkHref" href="#" target="_blank">▶ If the video doesn't play, watch it directly on YouTube</a>
-</p>
-
-    <div class="card" id="videoInfoCard" style="display:none;">
-      <h2 id="videoTitle"></h2>
-      <p class="video-sub" id="videoSub"></p>
-    </div>
-
-    <div class="card">
-      <h2>📊 Live Fairness Summary</h2>
-      <div class="metrics">
-        <div class="metric">
-          <span class="metric-value" id="totalCount">0</span>
-          <span class="metric-label">Total scored</span>
+      <!-- LEFT COLUMN: Video Preview & Details -->
+      <article class="panel video-panel">
+        <div class="panel-header-simple">
+          <h2 class="panel-title">Video Overview</h2>
         </div>
-        <div class="metric">
-          <span class="metric-value" id="toxicityRate">0%</span>
-          <span class="metric-label">Toxicity rate</span>
+
+        <div class="video-frame" id="video-frame">
+          <div class="video-placeholder-content">
+            <span class="video-placeholder-icon">&#9654;</span>
+            <p id="video-placeholder-text">Paste any YouTube video link above to preview the player, explore its full
+              description, and analyze comments.</p>
+          </div>
         </div>
-        <div class="metric">
-          <span class="metric-value" id="identityCount">0</span>
-          <span class="metric-label">Identity mentions</span>
+
+        <!-- Rich Video Details Section -->
+        <div id="video-info" class="video-info-block" style="display: none;">
+
+          <!-- Channel & External Link Bar -->
+          <div class="video-channel-row">
+            <div class="channel-wrapper">
+              <div class="channel-avatar" id="channel-avatar">Y</div>
+              <div class="channel-texts">
+                <span id="video-channel" class="video-meta-channel"></span>
+                <span id="video-published" class="video-meta-date"></span>
+              </div>
+            </div>
+            <a id="video-external-link" href="#" target="_blank" rel="noopener" class="video-external-btn">
+              Watch on YouTube &nearr;
+            </a>
+          </div>
+
+          <!-- Title -->
+          <h3 id="video-title" class="video-meta-title"></h3>
+
+          <!-- Video Stat Chips -->
+          <div class="video-stats-chips" id="video-stats-chips">
+            <div class="stat-chip" id="chip-views" title="Total Views">
+              <span class="chip-icon">&#128065;&#65039;</span>
+              <span class="chip-label">Views</span>
+              <strong class="chip-value" id="val-views">-</strong>
+            </div>
+            <div class="stat-chip" id="chip-likes" title="Likes">
+              <span class="chip-icon">&#128077;</span>
+              <span class="chip-label">Likes</span>
+              <strong class="chip-value" id="val-likes">-</strong>
+            </div>
+            <div class="stat-chip" id="chip-comments" title="Total Comments on YouTube">
+              <span class="chip-icon">&#128172;</span>
+              <span class="chip-label">Comments</span>
+              <strong class="chip-value" id="val-comments">-</strong>
+            </div>
+          </div>
+
+          <!-- Video Tags Row -->
+          <div class="video-tags-row" id="video-tags-row" style="display: none;">
+            <!-- Dynamically populated tags -->
+          </div>
+
+          <!-- Expandable Video Description Box -->
+          <div class="video-desc-card" id="video-desc-card">
+            <div class="desc-card-top">
+              <span class="desc-card-title">&#128221; Description</span>
+              <button type="button" class="desc-toggle-btn" id="desc-toggle-btn" onclick="toggleDescription()">Show
+                more</button>
+            </div>
+            <div class="desc-content collapsed" id="video-description">
+              No description available for this video.
+            </div>
+          </div>
+
         </div>
+      </article>
+
+      <!-- RIGHT COLUMN: Comment Analysis -->
+      <article class="panel results-panel">
+        <div class="results-header">
+          <h2 class="panel-title">Comment analysis</h2>
+          <span class="panel-tag">Toxicity Engine</span>
+        </div>
+
+        <!-- 1. Initial Empty State -->
+        <div class="empty-state" id="empty-state" role="status" aria-live="polite">
+          <span class="empty-icon" aria-hidden="true">i</span>
+          <h2>Awaiting YouTube Video</h2>
+          <p>Paste a YouTube video link above and click <strong>Analyze comments</strong> to fetch live comments and
+            classify them into Toxic and Non-Toxic categories.</p>
+        </div>
+
+        <!-- 2. Loading State -->
+        <div class="loading-state" id="loading-state" style="display: none;" role="status">
+          <div class="spinner"></div>
+          <h3>Fetching & Analyzing Comments ...</h3>
+          <p>Retrieving accessible comments via YouTube Data API and evaluating toxicity with the trained multi-label
+            machine learning model.</p>
+        </div>
+
+        <!-- 3. Active Results View -->
+        <div class="analysis-results" id="analysis-results" style="display: none;">
+
+          <!-- Summary Metrics Cards -->
+          <div class="stats-row">
+            <div class="stat-box">
+              <span class="stat-label">Total Analyzed</span>
+              <span class="stat-number" id="stat-total">0</span>
+            </div>
+            <div class="stat-box stat-toxic">
+              <span class="stat-label">Toxic Comments</span>
+              <span class="stat-number color-toxic" id="stat-toxic">0</span>
+              <span class="stat-pct pct-toxic" id="stat-toxic-pct">0.0%</span>
+            </div>
+            <div class="stat-box stat-clean">
+              <span class="stat-label">Non-Toxic</span>
+              <span class="stat-number color-clean" id="stat-clean">0</span>
+              <span class="stat-pct pct-clean" id="stat-clean-pct">0.0%</span>
+            </div>
+          </div>
+
+          <!-- Ratio Progress Bar -->
+          <div class="ratio-container">
+            <div class="ratio-labels">
+              <span>Non-Toxic: <strong id="ratio-clean-text">0.0%</strong></span>
+              <span>Toxic: <strong id="ratio-toxic-text">0.0%</strong></span>
+            </div>
+            <div class="ratio-track">
+              <div id="bar-clean" class="ratio-bar-clean" style="width: 50%;"></div>
+              <div id="bar-toxic" class="ratio-bar-toxic" style="width: 50%;"></div>
+            </div>
+            <p class="ratio-footnote" id="ratio-disclaimer">
+              * Percentages describe comments successfully retrieved and analyzed, not every comment ever posted.
+            </p>
+          </div>
+
+          <!-- Comments Filter Bar -->
+          <div class="filter-row">
+            <div class="filter-buttons">
+              <button type="button" class="filter-tab active" data-filter="all" onclick="setFilter('all')">
+                All (<span id="count-all">0</span>)
+              </button>
+              <button type="button" class="filter-tab tab-toxic" data-filter="toxic" onclick="setFilter('toxic')">
+                Toxic (<span id="count-toxic">0</span>)
+              </button>
+              <button type="button" class="filter-tab tab-clean" data-filter="clean" onclick="setFilter('clean')">
+                Non-Toxic (<span id="count-clean">0</span>)
+              </button>
+            </div>
+          </div>
+
+          <!-- Comment Cards List -->
+          <div class="comments-scroll-list" id="comments-container">
+            <!-- Dynamically populated via JS -->
+          </div>
+
+          <!-- High Volume Pagination / Progressive Loader -->
+          <div class="load-more-bar" id="load-more-bar" style="display: none;">
+            <span class="load-more-info" id="load-more-info">Showing 100 comments</span>
+            <div class="load-more-actions">
+              <button type="button" class="load-more-btn" id="load-more-btn" onclick="loadMoreComments()">
+                Load next 100 comments
+              </button>
+              <button type="button" class="load-all-btn" id="load-all-btn" onclick="loadAllComments()">
+                Show all
+              </button>
+            </div>
+          </div>
+
+          <!-- Empty Filter Notification -->
+          <div class="empty-filter" id="empty-filter" style="display: none;">
+            <p>No comments found under the selected filter.</p>
+          </div>
+
+        </div>
+
+      </article>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <div class="footer-inner">
+      <span>YouTube Toxic Comment Analyzer &bull; Trained on Jigsaw Challenge Dataset</span>
+      <div class="footer-links">
+        <a href="https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge/data" target="_blank"
+          rel="noopener">Dataset</a>
+        <a href="https://developers.google.com/youtube/v3" target="_blank" rel="noopener">YouTube API</a>
       </div>
-
-      <h3>Toxicity rate by identity group</h3>
-      <div id="identityChart" class="identity-chart"></div>
     </div>
-  </div>
+  </footer>
 
-  <div class="right-panel">
-    <h2>💬 Live Comments</h2>
-
-    <div class="filter-bar">
-      <button class="filter-btn active" data-filter="all">All</button>
-      <button class="filter-btn" data-filter="toxic">🔴 Toxic only</button>
-      <button class="filter-btn" data-filter="clean">🟢 Clean only</button>
-    </div>
-
-    <div id="commentCount" class="comment-count">0 comments</div>
-
-    <div id="commentFeed" class="comment-feed">
-      <p style="color:#7c7f91; font-size:0.85rem;">Paste a video URL above and click Go to start.</p>
-    </div>
-  </div>
-
-</div>
-
-<script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script src="/static/js/app.js?v=4"></script>
 </body>
+
 </html>

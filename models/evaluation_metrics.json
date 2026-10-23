@@ -1,0 +1,98 @@
+{
+  "evaluation_timestamp": "2026-10-22T17:37:22.558601",
+  "test_dataset_path": "data/processed/test_clean.csv",
+  "test_sample_count": 63613,
+  "macro_metrics": {
+    "f1": 0.4583,
+    "precision": 0.4681,
+    "recall": 0.474,
+    "roc_auc": 0.9528
+  },
+  "micro_metrics": {
+    "f1": 0.6383,
+    "precision": 0.6322,
+    "recall": 0.6445
+  },
+  "hamming_loss": 0.02774,
+  "exact_match_ratio": 0.8908,
+  "per_label": {
+    "toxic": {
+      "label": "toxic",
+      "threshold": 0.35,
+      "precision": 0.6323,
+      "recall": 0.7028,
+      "f1": 0.6657,
+      "roc_auc": 0.9514,
+      "support": 6090,
+      "tp": 4280,
+      "fp": 2489,
+      "fn": 1810,
+      "tn": 55034
+    },
+    "severe_toxic": {
+      "label": "severe_toxic",
+      "threshold": 0.22,
+      "precision": 0.2731,
+      "recall": 0.5232,
+      "f1": 0.3589,
+      "roc_auc": 0.9766,
+      "support": 367,
+      "tp": 192,
+      "fp": 511,
+      "fn": 175,
+      "tn": 62735
+    },
+    "obscene": {
+      "label": "obscene",
+      "threshold": 0.28,
+      "precision": 0.6929,
+      "recall": 0.6768,
+      "f1": 0.6848,
+      "roc_auc": 0.9679,
+      "support": 3691,
+      "tp": 2498,
+      "fp": 1107,
+      "fn": 1193,
+      "tn": 58815
+    },
+    "threat": {
+      "label": "threat",
+      "threshold": 0.2,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.9076,
+      "support": 211,
+      "tp": 0,
+      "fp": 0,
+      "fn": 211,
+      "tn": 63402
+    },
+    "insult": {
+      "label": "insult",
+      "threshold": 0.3,
+      "precision": 0.6512,
+      "recall": 0.6277,
+      "f1": 0.6392,
+      "roc_auc": 0.963,
+      "support": 3427,
+      "tp": 2151,
+      "fp": 1152,
+      "fn": 1276,
+      "tn": 59034
+    },
+    "identity_hate": {
+      "label": "identity_hate",
+      "threshold": 0.27,
+      "precision": 0.5589,
+      "recall": 0.3132,
+      "f1": 0.4014,
+      "roc_auc": 0.9504,
+      "support": 712,
+      "tp": 223,
+      "fp": 176,
+      "fn": 489,
+      "tn": 62725
+    }
+  }
+}

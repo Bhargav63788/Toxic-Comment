@@ -345,6 +345,13 @@ function renderAnalysisResults(data) {
   document.getElementById("count-toxic").textContent = toxicCount;
   document.getElementById("count-clean").textContent = cleanCount;
 
+  const knCount = (data.comments || []).filter(c => {
+    const l = (c.language || "").toLowerCase();
+    return l.includes("kannada") || l.includes("ಕನ್ನಡ") || l.includes("mixed");
+  }).length;
+  const countKnEl = document.getElementById("count-kannada");
+  if (countKnEl) countKnEl.textContent = knCount;
+
   // 5. Render Comment Cards
   currentFilter = "all";
   updateFilterButtons();
@@ -356,6 +363,12 @@ function getFilteredComments() {
   if (currentFilter === "all") return analysisData.comments;
   if (currentFilter === "toxic") return analysisData.comments.filter(c => c.is_toxic);
   if (currentFilter === "clean") return analysisData.comments.filter(c => !c.is_toxic);
+  if (currentFilter === "kannada") {
+    return analysisData.comments.filter(c => {
+      const l = (c.language || "").toLowerCase();
+      return l.includes("kannada") || l.includes("ಕನ್ನಡ") || l.includes("mixed");
+    });
+  }
   return analysisData.comments;
 }
 
@@ -438,6 +451,18 @@ function createCommentCardElement(c) {
 
   const replyBadge = c.is_reply ? `<span class="badge-reply-indicator">↳ Reply</span>` : "";
 
+  const langLabel = c.language || "English";
+  let langClass = "lang-en";
+  let langShort = "EN";
+  if (langLabel.includes("ಕನ್ನಡ") || langLabel.toLowerCase().includes("kannada")) {
+    langClass = "lang-kn";
+    langShort = "ಕನ್ನಡ";
+  } else if (langLabel.toLowerCase().includes("mixed")) {
+    langClass = "lang-mixed";
+    langShort = "KN/EN";
+  }
+  const langBadge = `<span class="badge-pill badge-lang ${langClass}" title="${escapeHtml(langLabel)}">${langShort}</span>`;
+
   card.innerHTML = `
     <div class="comment-card-top">
       <div class="comment-author-info">
@@ -445,9 +470,12 @@ function createCommentCardElement(c) {
         <span class="author-text">${escapeHtml(c.author)}</span>
         ${replyBadge}
       </div>
-      <span class="badge-pill ${isToxic ? "toxic" : "clean"}">
-        ${isToxic ? "Toxic" : "Non-Toxic"}
-      </span>
+      <div class="comment-badges-group">
+        ${langBadge}
+        <span class="badge-pill ${isToxic ? "toxic" : "clean"}">
+          ${isToxic ? "Toxic" : "Non-Toxic"}
+        </span>
+      </div>
     </div>
 
     <div class="comment-body">${escapeHtml(c.text)}</div>
@@ -509,3 +537,5 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+

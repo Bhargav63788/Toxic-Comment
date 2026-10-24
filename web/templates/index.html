@@ -13,15 +13,20 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/style.css?v=5">
+  <link rel="stylesheet" href="/static/css/style.css?v=6">
 </head>
 
 <body>
   <main class="page">
     <header class="heading">
-      <p class="eyebrow">YouTube Toxic Comment Detection</p>
+      <div class="eyebrow-row">
+        <p class="eyebrow">YouTube Toxic Comment Detection</p>
+        <span class="lang-support-pill"><span class="lang-dot"></span> English &amp; ಕನ್ನಡ (Kannada) Supported</span>
+      </div>
       <h1>YouTube Toxic Comment Analyzer</h1>
     </header>
+
+
 
     <!-- Main Link Input Form -->
     <form class="link-form" id="video-form" novalidate onsubmit="event.preventDefault(); startAnalysis();">
@@ -183,6 +188,9 @@
               <button type="button" class="filter-tab tab-clean" data-filter="clean" onclick="setFilter('clean')">
                 Non-Toxic (<span id="count-clean">0</span>)
               </button>
+              <button type="button" class="filter-tab tab-kannada" data-filter="kannada" onclick="setFilter('kannada')">
+                ಕನ್ನಡ (<span id="count-kannada">0</span>)
+              </button>
             </div>
           </div>
 
@@ -226,7 +234,7 @@
     </div>
   </footer>
 
-  <script src="/static/js/app.js?v=4"></script>
+  <script src="/static/js/app.js?v=5"></script>
 </body>
 
 </html>

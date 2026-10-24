@@ -21,6 +21,11 @@ from googleapiclient.errors import HttpError
 from src.predict import load_model_artifacts
 from src.preprocessing import clean_text, DEFAULT_LABELS
 from src.context_analyzer import get_context_analyzer, mark_negation_and_context
+from src.kannada_analyzer import (
+    detect_language,
+    load_kannada_artifacts,
+    get_kannada_context_analyzer
+)
 
 # Built-in demo comments for testing without requiring an immediate Google API key
 DEMO_COMMENTS = [
@@ -92,6 +97,48 @@ DEMO_COMMENTS = [
         "author": "SkepticalViewer",
         "author_avatar": "",
         "text": "I will destroy you and erase your channel from the internet permanently.",
+        "like_count": 0
+    },
+    {
+        "comment_id": "demo_11",
+        "author": "TechKannadiga",
+        "author_avatar": "",
+        "text": "ತುಂಬಾ ಧನ್ಯವಾದಗಳು ಗುರುಗಳೇ, ವಿಷಯವನ್ನು ಅತ್ಯಂತ ಸರಳವಾಗಿ ಮತ್ತು ಸ್ಪಷ್ಟವಾಗಿ ವಿವರಿಸಿದ್ದೀರಿ. ಸೂಪರ್ ಮಾಹಿತಿ!",
+        "like_count": 34
+    },
+    {
+        "comment_id": "demo_12",
+        "author": "KopaGonda_99",
+        "author_avatar": "",
+        "text": "ನೀನು ಒಬ್ಬ ಮೂರ್ಖ ಮತ್ತು ನಿಷ್ಪ್ರಯೋಜಕ ಕತ್ತೆ. ನಿನಗೆ ಏನೂ ಗೊತ್ತಿಲ್ಲ ಬಾಯಿ ಮುಚ್ಕೋ ಲೋಫರ್.",
+        "like_count": 1
+    },
+    {
+        "comment_id": "demo_13",
+        "author": "BangaloreCoder",
+        "author_avatar": "",
+        "text": "tumba chennagide sir! Next video dalli neural networks bagge detailed tutorial madi please.",
+        "like_count": 22
+    },
+    {
+        "comment_id": "demo_14",
+        "author": "AngryTroll_KN",
+        "author_avatar": "",
+        "text": "ನಿನ್ನನ್ನು ಕೊಲ್ಲುತ್ತೇನೆ ಹುಷಾರ್, ಎಲ್ಲಾದರೂ ಕಣ್ಣಿಗೆ ಬಿದ್ದರೆ ಮುಗಿಸ್ತೀನಿ ನಿನ್ನ ಕಥೆ.",
+        "like_count": 0
+    },
+    {
+        "comment_id": "demo_15",
+        "author": "NaveenKumar",
+        "author_avatar": "",
+        "text": "ನೀನು ದಡ್ಡ ಅಲ್ಲ, ಜನ ಏನೇ ನೆಗೆಟಿವ್ ಹೇಳಿದ್ರೂ ಈ ವಿಡಿಯೋ ಕೆಟ್ಟದಲ್ಲ. ತುಂಬಾ ಚೆನ್ನಾಗಿ ಮಾಡಿದ್ದೀಯ ಮುಂದುವರಿಸಿ.",
+        "like_count": 18
+    },
+    {
+        "comment_id": "demo_16",
+        "author": "RudeUser55",
+        "author_avatar": "",
+        "text": "neenu obba huccha rascal, thika muchkondu hogu illinda wasting time.",
         "like_count": 0
     }
 ]
@@ -366,36 +413,87 @@ def analyze_youtube_comments(
     labels = artifacts.get("labels", DEFAULT_LABELS)
     context_analyzer = get_context_analyzer()
 
-    # Batch contextual text normalization
-    contextual_texts = [mark_negation_and_context(c["text"]) for c in comments]
-    contextual_texts = [t if t.strip() else (clean_text(c["text"]) or "comment") for t, c in zip(contextual_texts, comments)]
+    # Load Kannada model artifacts if available
+    kn_artifacts = artifacts.get("kannada")
+    if kn_artifacts is None:
+        try:
+            kn_artifacts = load_kannada_artifacts()
+        except Exception:
+            kn_artifacts = None
 
-    # Batch vectorization
-    vec_matrix = vectorizer.transform(contextual_texts)
+    kn_vectorizer = kn_artifacts["vectorizer"] if kn_artifacts else None
+    kn_classifiers = kn_artifacts["classifiers"] if kn_artifacts else None
+    kn_thresholds = kn_artifacts.get("thresholds", {l: 0.35 for l in labels}) if kn_artifacts else thresholds
+    kn_context_analyzer = get_kannada_context_analyzer()
 
-    # Predict raw probabilities for each label
-    raw_label_probs = {}
-    for l in labels:
-        clf = classifiers[l]
-        raw_label_probs[l] = clf.predict_proba(vec_matrix)[:, 1]
+    # 1. Classify comments by language
+    kannada_indices = []
+    english_indices = []
+    lang_info_list = []
+
+    for idx, c in enumerate(comments):
+        info = detect_language(c.get("text", ""))
+        lang_info_list.append(info)
+        if info["is_kannada"] and kn_artifacts is not None:
+            kannada_indices.append(idx)
+        else:
+            english_indices.append(idx)
+
+    # 2. Batch vectorization and ML prediction
+    raw_label_probs = {l: [0.0] * total for l in labels}
+
+    # Batch process English comments
+    if english_indices:
+        en_texts = [mark_negation_and_context(comments[i]["text"]) for i in english_indices]
+        en_texts = [t if t.strip() else (clean_text(comments[i]["text"]) or "comment") for t, i in zip(en_texts, english_indices)]
+        en_vec = vectorizer.transform(en_texts)
+        for l in labels:
+            probs = classifiers[l].predict_proba(en_vec)[:, 1]
+            for pos, orig_idx in enumerate(english_indices):
+                raw_label_probs[l][orig_idx] = float(probs[pos])
+
+    # Batch process Kannada comments
+    if kannada_indices and kn_artifacts is not None:
+        kn_texts = [clean_text(comments[i]["text"]) or "comment" for i in kannada_indices]
+        kn_vec = kn_vectorizer.transform(kn_texts)
+        for l in labels:
+            probs = kn_classifiers[l].predict_proba(kn_vec)[:, 1]
+            for pos, orig_idx in enumerate(kannada_indices):
+                raw_label_probs[l][orig_idx] = float(probs[pos])
 
     analyzed_list = []
     toxic_count = 0
     category_counts = {l: 0 for l in labels}
+    language_counts = {"English": 0, "Kannada": 0, "Mixed": 0}
 
     for idx, c in enumerate(comments):
         raw_scores = {l: float(raw_label_probs[l][idx]) for l in labels}
+        lang_info = lang_info_list[idx]
 
-        # Full sentence context evaluation
-        context_eval = context_analyzer.evaluate(
-            raw_text=c.get("text", ""),
-            ml_probs=raw_scores,
-            ml_thresholds=thresholds
-        )
-
-        c_flags = context_eval["final_flags"]
-        c_scores = {l: round(context_eval["adjusted_probs"][l], 4) for l in labels}
-        is_toxic = context_eval["final_is_toxic"]
+        # Route to appropriate language context analyzer
+        if lang_info["is_kannada"] and kn_artifacts is not None:
+            context_eval = kn_context_analyzer.evaluate(
+                raw_text=c.get("text", ""),
+                ml_probs=raw_scores,
+                ml_thresholds=kn_thresholds
+            )
+            c_flags = context_eval["final_flags"]
+            c_scores = {l: round(context_eval["adjusted_probs"][l], 4) for l in labels}
+            is_toxic = context_eval["final_is_toxic"]
+            if lang_info["language"] == "mixed":
+                language_counts["Mixed"] += 1
+            else:
+                language_counts["Kannada"] += 1
+        else:
+            context_eval = context_analyzer.evaluate(
+                raw_text=c.get("text", ""),
+                ml_probs=raw_scores,
+                ml_thresholds=thresholds
+            )
+            c_flags = context_eval["final_flags"]
+            c_scores = {l: round(context_eval["adjusted_probs"][l], 4) for l in labels}
+            is_toxic = context_eval["final_is_toxic"]
+            language_counts["English"] += 1
 
         if is_toxic:
             toxic_count += 1
@@ -426,7 +524,9 @@ def analyze_youtube_comments(
             "category_scores": c_scores,
             "context_summary": context_eval.get("context_summary", ""),
             "is_reply": c.get("is_reply", False),
-            "parent_id": c.get("parent_id")
+            "parent_id": c.get("parent_id"),
+            "language": lang_info["display_name"],
+            "language_code": lang_info["language"]
         })
 
     non_toxic_count = total - toxic_count
@@ -440,5 +540,6 @@ def analyze_youtube_comments(
         "toxic_percentage": toxic_percentage,
         "non_toxic_percentage": non_toxic_percentage,
         "category_counts": category_counts,
+        "language_counts": language_counts,
         "analyzed_comments": analyzed_list
     }

@@ -19,6 +19,12 @@ from typing import Dict, Any, List, Optional
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.preprocessing import clean_text, validate_input_comment, DEFAULT_LABELS
 from src.context_analyzer import get_context_analyzer, mark_negation_and_context
+from src.kannada_analyzer import (
+    detect_language,
+    load_kannada_artifacts,
+    predict_kannada_comment,
+    get_kannada_context_analyzer
+)
 
 _LOADED_ARTIFACTS = None
 
@@ -51,12 +57,19 @@ def load_model_artifacts(model_dir: str = "models", force_reload: bool = False) 
 
     thresholds = metadata.get("optimal_thresholds", {l: 0.5 for l in DEFAULT_LABELS})
 
+    kannada_artifacts = None
+    try:
+        kannada_artifacts = load_kannada_artifacts(model_dir=model_dir, force_reload=force_reload)
+    except Exception:
+        kannada_artifacts = None
+
     _LOADED_ARTIFACTS = {
         "vectorizer": vectorizer,
         "classifiers": classifiers,
         "metadata": metadata,
         "thresholds": thresholds,
-        "labels": metadata.get("labels", DEFAULT_LABELS)
+        "labels": metadata.get("labels", DEFAULT_LABELS),
+        "kannada": kannada_artifacts
     }
     return _LOADED_ARTIFACTS
 
@@ -136,6 +149,106 @@ def predict_comment(
 
     labels = artifacts["labels"]
 
+    # 1. Detect language (Kannada, English, or Mixed)
+    lang_info = detect_language(raw_text)
+    is_kannada_lang = lang_info["is_kannada"]
+
+    if is_kannada_lang:
+        # Kannada or Kanglish inference
+        kn_artifacts = artifacts.get("kannada") if artifacts else None
+        kn_res = predict_kannada_comment(
+            raw_text=raw_text,
+            artifacts=kn_artifacts,
+            threshold_overrides=threshold_overrides
+        )
+
+        # If comment is mixed Kannada & English, also evaluate with English model
+        if lang_info["language"] == "mixed":
+            contextual_text = mark_negation_and_context(raw_text)
+            if not contextual_text or not contextual_text.strip():
+                contextual_text = clean_text(raw_text) or "unparsed"
+            vec = vectorizer.transform([contextual_text])
+            en_raw_probs = {l: float(classifiers[l].predict_proba(vec)[0, 1]) for l in labels}
+            en_eval = get_context_analyzer().evaluate(
+                raw_text=raw_text,
+                ml_probs=en_raw_probs,
+                ml_thresholds=thresholds
+            )
+
+            combined_probs = {}
+            combined_flags = set(kn_res["flagged_labels"])
+            for l in labels:
+                p_kn = kn_res["adjusted_probs"].get(l, 0.0)
+                p_en = en_eval["adjusted_probs"].get(l, 0.0)
+                combined_probs[l] = max(p_kn, p_en)
+                if l in en_eval["final_flags"]:
+                    combined_flags.add(l)
+
+            flagged_labels = list(combined_flags)
+            adjusted_probs = combined_probs
+            is_toxic = kn_res["is_toxic"] or en_eval["final_is_toxic"]
+            context_eval = kn_res["context_eval"]
+            if en_eval.get("context_reasons"):
+                context_eval["context_reasons"].extend(en_eval["context_reasons"])
+        else:
+            adjusted_probs = kn_res["adjusted_probs"]
+            flagged_labels = kn_res["flagged_labels"]
+            is_toxic = kn_res["is_toxic"]
+            context_eval = kn_res["context_eval"]
+
+        label_predictions = {}
+        for label in labels:
+            prob = float(adjusted_probs[label])
+            thresh = float(thresholds.get(label, 0.35))
+            is_flagged = bool(label in flagged_labels)
+
+            if prob >= 0.75:
+                risk = "High"
+            elif prob >= thresh:
+                risk = "Moderate"
+            elif prob >= 0.25:
+                risk = "Elevated"
+            else:
+                risk = "Low"
+
+            label_predictions[label] = {
+                "probability": round(prob, 4),
+                "percentage": round(prob * 100, 1),
+                "threshold": round(thresh, 2),
+                "flagged": is_flagged,
+                "risk_level": risk
+            }
+
+        severity = compute_severity(flagged_labels, adjusted_probs)
+        base_interp = generate_interpretation(is_toxic, severity, flagged_labels, adjusted_probs)
+        if context_eval.get("context_reasons"):
+            reasons_text = "; ".join(context_eval["context_reasons"])
+            interpretation = f"[{lang_info['display_name']}] {base_interp} Context Analysis: {reasons_text}."
+        else:
+            interpretation = f"[{lang_info['display_name']}] {base_interp}"
+
+        inference_ms = round((time.perf_counter() - t_start) * 1000, 2)
+        cleaned_preview = clean_text(raw_text)[:120] + ("..." if len(clean_text(raw_text)) > 120 else "")
+
+        return {
+            "status": "success",
+            "is_toxic": is_toxic,
+            "classification": "Toxic" if is_toxic else "Non-Toxic",
+            "severity": severity,
+            "flagged_labels": flagged_labels,
+            "flagged_count": len(flagged_labels),
+            "predictions": label_predictions,
+            "interpretation": interpretation,
+            "context_analysis": context_eval,
+            "char_count": len(raw_text),
+            "word_count": len(raw_text.split()),
+            "cleaned_preview": cleaned_preview,
+            "inference_time_ms": inference_ms,
+            "detected_language": lang_info["display_name"],
+            "language_code": lang_info["language"]
+        }
+
+    # 2. English inference (standard pipeline)
     # Preprocessing with contextual text scoping
     contextual_text = mark_negation_and_context(raw_text)
     if not contextual_text or not contextual_text.strip():
@@ -207,7 +320,9 @@ def predict_comment(
         "char_count": len(raw_text),
         "word_count": len(raw_text.split()),
         "cleaned_preview": contextual_text[:120] + ("..." if len(contextual_text) > 120 else ""),
-        "inference_time_ms": inference_ms
+        "inference_time_ms": inference_ms,
+        "detected_language": lang_info["display_name"],
+        "language_code": lang_info["language"]
     }
 
 

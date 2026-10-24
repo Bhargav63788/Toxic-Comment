@@ -49,8 +49,8 @@ def clean_text(text: Any) -> str:
     # Remove usernames often in Wikipedia talk pages (e.g., [[User:Foo]])
     text = re.sub(r"\[\[user:[^\]]+\]\]", " ", text)
 
-    # Keep only letters, digits, apostrophes and spaces
-    text = re.sub(r"[^a-z0-9'\s]", " ", text)
+    # Keep only letters (including Kannada script), digits, apostrophes and spaces
+    text = re.sub(r"[^a-z0-9\u0C80-\u0CFF'\s]", " ", text)
 
     # Normalize contractions and apostrophes
     text = re.sub(r"'+", "'", text)

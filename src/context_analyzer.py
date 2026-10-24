@@ -90,7 +90,7 @@ def mark_negation_and_context(text: Any) -> str:
     )
 
     # 3. Propagate negation across clauses
-    raw_tokens = re.findall(r"[a-z0-9'_]+|[.,;:!?]", text.lower())
+    raw_tokens = re.findall(r"[a-z0-9\u0C80-\u0CFF'_]+|[.,;:!?]", text.lower())
     tokens = []
     in_negation = False
 

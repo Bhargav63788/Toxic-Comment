@@ -75,10 +75,13 @@ def index():
 def health():
     """Health check endpoint."""
     model_ready = ARTIFACTS is not None
+    kannada_ready = bool(ARTIFACTS.get("kannada")) if model_ready else False
     has_api_key = bool(os.environ.get("YOUTUBE_API_KEY", "").strip())
     return jsonify({
         "status": "healthy" if model_ready else "degraded",
         "model_loaded": model_ready,
+        "kannada_model_loaded": kannada_ready,
+        "supported_languages": ["English", "Kannada (ಕನ್ನಡ)", "Kanglish (Romanized Kannada)"],
         "youtube_api_key_configured": has_api_key,
         "labels": ARTIFACTS["labels"] if model_ready else [],
         "server_time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -214,6 +217,7 @@ def analyze_youtube():
         "toxic_percentage": analysis_result["toxic_percentage"],
         "non_toxic_percentage": analysis_result["non_toxic_percentage"],
         "category_counts": analysis_result["category_counts"],
+        "language_counts": analysis_result.get("language_counts", {}),
         "comments": analysis_result["analyzed_comments"],
         "latency_ms": latency_ms,
         "disclaimer": disclaimer
@@ -262,8 +266,18 @@ def model_info():
         except Exception:
             pass
 
+    kn_meta_path = os.path.join(MODEL_DIR, "kannada_model_metadata.json")
+    kn_meta_data = {}
+    if os.path.exists(kn_meta_path):
+        try:
+            with open(kn_meta_path, "r", encoding="utf-8") as f:
+                kn_meta_data = json.load(f)
+        except Exception:
+            pass
+
     return jsonify({
         "status": "success",
+        "supported_languages": ["English", "Kannada (ಕನ್ನಡ)", "Kanglish (Romanized Kannada)"],
         "dataset": {
             "name": "Jigsaw Toxic Comment Classification Challenge",
             "primary_source": "https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge/data",
@@ -278,7 +292,8 @@ def model_info():
             "classifiers": "One-vs-Rest Calibrated Logistic Regression (L-BFGS, C=2.0)",
             "decision_thresholds": meta_data.get("optimal_thresholds", {})
         },
-        "evaluation_metrics": eval_data
+        "evaluation_metrics": eval_data,
+        "kannada_model": kn_meta_data
     }), 200
 
 

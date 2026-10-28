@@ -218,6 +218,7 @@ def analyze_youtube():
         "non_toxic_percentage": analysis_result["non_toxic_percentage"],
         "category_counts": analysis_result["category_counts"],
         "language_counts": analysis_result.get("language_counts", {}),
+        "emoji_stats": analysis_result.get("emoji_stats", {}),
         "comments": analysis_result["analyzed_comments"],
         "latency_ms": latency_ms,
         "disclaimer": disclaimer
@@ -226,7 +227,7 @@ def analyze_youtube():
 
 @app.route("/api/predict", methods=["POST"])
 def predict():
-    """Single-comment prediction endpoint."""
+    """Single-comment prediction endpoint with full emoji context and comparison."""
     if ARTIFACTS is None:
         return jsonify({"status": "error", "message": "Model not loaded."}), 503
 
@@ -235,12 +236,13 @@ def predict():
 
     data = request.get_json(silent=True) or {}
     raw_text = data.get("text")
+    compare_mode = bool(data.get("compare", True))
     is_valid, err_msg = validate_input_comment(raw_text, max_chars=5000)
     if not is_valid:
         status_code = 413 if "exceeds maximum" in err_msg.lower() else 400
         return jsonify({"status": "error", "message": err_msg}), status_code
 
-    result = predict_comment(raw_text, artifacts=ARTIFACTS)
+    result = predict_comment(raw_text, artifacts=ARTIFACTS, return_comparison=compare_mode)
     return jsonify(result), 200
 
 

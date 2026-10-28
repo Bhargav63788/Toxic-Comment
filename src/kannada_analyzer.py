@@ -110,20 +110,25 @@ KN_THREAT_WORDS = {
     "haaktini", "madtini", "madthini", "hushar", "jeeva"
 }
 
-# Distinctive Kanglish lexicon used to detect romanized Kannada
-# Excludes general English words like 'great', 'super', 'awesome', 'bad'
-DISTINCTIVE_KANGLISH_WORDS = {
+# Topic nouns / geographical names frequently used in pure English discussions
+KANGLISH_TOPIC_NOUNS = {
+    "kannada", "kannadiga", "kannadigas", "karnataka", "bangalore", "bengaluru",
+    "mysore", "mysuru", "mangaluru", "mangalore", "hubli", "dharwad", "belagavi"
+}
+
+# Grammatical and conversational Kanglish markers (pronouns, verbs, particles, slurs, threats)
+GRAMMATICAL_KANGLISH_WORDS = {
     # Pronouns & common particles in Kannada
     "neenu", "neen", "neevu", "naanu", "naan", "nanna", "nanage", "ninge",
     "nimage", "namage", "beku", "beda", "madbeda", "madbedi", "nodkollo",
     "yavaga", "yenu", "hege", "idu", "adhu", "kelsa", "makla", "gothilla",
-    "dayavittu", "kannada", "kannadiga", "karnataka", "alla", "illa", "allve",
-    "allave", "tappalla", "illave", "irlilla", "iralla", "guru", "magane",
-    "chennagide", "chennagi", "dhanyavada", "dhanyavadagalu", "dhanyavadha",
-    "namaskara", "namaskaragalu", "krutajnategalu", "abhinandhanegalu",
-    "shubhashayagalu", "shubhavagali", "adbhuta", "adbhutha", "adbhutavagide",
-    "uttama", "atyuttama", "muddagide", "istavayithu", "kushiyayithu", "benki",
-    "olleyadu", "olleyadagali", "munduvarisi", "geluvu", "thumba", "tumba",
+    "dayavittu", "alla", "illa", "allve", "allave", "tappalla", "illave",
+    "irlilla", "iralla", "guru", "magane", "chennagide", "chennagi",
+    "dhanyavada", "dhanyavadagalu", "dhanyavadha", "namaskara", "namaskaragalu",
+    "krutajnategalu", "abhinandhanegalu", "shubhashayagalu", "shubhavagali",
+    "adbhuta", "adbhutha", "adbhutavagide", "uttama", "atyuttama", "muddagide",
+    "istavayithu", "kushiyayithu", "benki", "olleyadu", "olleyadagali",
+    "munduvarisi", "geluvu", "thumba", "tumba",
     # Insults & slurs in Kanglish
     "huccha", "huchha", "huchhi", "katte", "baddimaga", "baddimagane", "soole",
     "soolemaga", "soolemagane", "soolemakla", "bolimaga", "bolimagane",
@@ -140,6 +145,22 @@ DISTINCTIVE_KANGLISH_WORDS = {
     "haaktini", "madtini", "madthini", "hushar", "jeeva"
 }
 
+DISTINCTIVE_KANGLISH_WORDS = GRAMMATICAL_KANGLISH_WORDS | KANGLISH_TOPIC_NOUNS
+
+COMMON_ENGLISH_WORDS = {
+    "the", "is", "this", "that", "these", "those", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "shall", "should", "can", "could",
+    "may", "might", "must", "and", "or", "but", "if", "because", "bcaz", "caz", "as", "until", "while",
+    "of", "at", "by", "for", "with", "about", "against", "between", "into", "through", "during", "before",
+    "after", "above", "below", "to", "from", "up", "down", "in", "out", "on", "off", "over", "under",
+    "again", "further", "then", "once", "here", "there", "when", "where", "why", "how", "all", "any",
+    "both", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own",
+    "same", "so", "than", "too", "very", "can", "will", "just", "dont", "should", "now", "it", "its",
+    "i", "you", "he", "she", "we", "they", "me", "him", "her", "us", "them", "my", "your", "his", "their",
+    "our", "what", "which", "who", "whom", "people", "industry", "video", "tutorial", "great", "awesome",
+    "good", "work", "time", "first", "last", "waste", "game", "lesson", "system", "actor", "anyone", "locals"
+}
+
 
 # -----------------------------------------------------------------------------
 # 2. Language Detection
@@ -148,6 +169,8 @@ DISTINCTIVE_KANGLISH_WORDS = {
 def detect_language(text: Any) -> Dict[str, Any]:
     """
     Detect whether text is Kannada (Kannada script or Kanglish), English, or Mixed.
+    Distinguishes topical English discussions (mentioning 'kannada' or 'kannadiga')
+    from genuine grammatical Kannada/Kanglish.
     Returns:
       {
         "language": "kannada" | "english" | "mixed",
@@ -208,15 +231,35 @@ def detect_language(text: Any) -> Dict[str, Any]:
     # 2. Check for Romanized Kannada (Kanglish) markers
     text_lower = text_str.lower()
     words = set(re.findall(r"[a-z']+", text_lower))
-    kanglish_matches = words.intersection(DISTINCTIVE_KANGLISH_WORDS)
+    grammatical_matches = words.intersection(GRAMMATICAL_KANGLISH_WORDS)
+    english_matches = words.intersection(COMMON_ENGLISH_WORDS)
 
-    if len(kanglish_matches) >= 2 or (len(kanglish_matches) >= 1 and len(words) <= 7):
-        # Check if text is predominantly English with a single incidental marker
-        english_particles = words.intersection({
-            "the", "is", "this", "are", "you", "and", "in", "it", "to", "for",
-            "of", "a", "an", "on", "with", "video", "tutorial", "great", "awesome", "good"
-        })
-        if len(english_particles) >= 3 and len(kanglish_matches) == 1:
+    # If there are NO grammatical Kanglish words:
+    # Comments discussing Karnataka, Kannadiga people, Kannada language in pure English
+    # must be classified as English.
+    if len(grammatical_matches) == 0:
+        return {
+            "language": "english",
+            "is_kannada": False,
+            "script": "latin",
+            "kannada_char_count": 0,
+            "kannada_ratio": 0.0,
+            "display_name": "English"
+        }
+
+    # If text is predominantly English with a small proportion of Kanglish slang
+    if len(english_matches) >= 5 and len(english_matches) >= 2 * len(grammatical_matches):
+        return {
+            "language": "mixed",
+            "is_kannada": True,
+            "script": "latin",
+            "kannada_char_count": 0,
+            "kannada_ratio": 0.0,
+            "display_name": "Mixed (ಕನ್ನಡ / English)"
+        }
+
+    if len(grammatical_matches) >= 2 or (len(grammatical_matches) >= 1 and len(words) <= 7):
+        if len(english_matches) >= 3 and len(grammatical_matches) == 1:
             return {
                 "language": "mixed",
                 "is_kannada": True,

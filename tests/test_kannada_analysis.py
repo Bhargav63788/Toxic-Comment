@@ -223,3 +223,30 @@ def test_analyze_youtube_comments_multilingual_batch():
     assert "language_counts" in res
     assert res["language_counts"]["English"] >= 1
     assert res["language_counts"]["Kannada"] >= 1
+
+
+def test_detect_language_english_discussing_kannada_topics():
+    # Verify that pure English comments discussing Karnataka / Kannadiga are classified as English
+    user_comment = (
+        "IT industry was at paek then there was planned hiring of other language people and removal of kannadiga, "
+        "now Its full of Tamil,telugu,north and malayali people IT industry is in the edge of collapsing bcaz of AI "
+        "and Machinelearning automation, no outsourcing is being done by foreign IT giants , now the question of "
+        "hiring kannadiga its injustice to kannadiga who already betrayed by IT giants and their agenda . This fellow "
+        "CM is a good actor though , he cant if he wants to bcaz he is soldout .No offence to anyother languge speaking "
+        "IT people ,Anyone can work anywhere based on their talent and work. But keeping aside kannadiga just bcaz they "
+        "belong here and speak kannada is not less than killing locals identity . Its a HR propaganda worked as they "
+        "wished . Its a waste of time to correct now, when its a whole mess and become system . Kanndigas never learnt "
+        "a lesson . Its not the first time and will not be the last , Its happening in TVS bangalore,Bosch,JSW in "
+        "Vijayanagara District. All these bureaurcrats and govt knows that but they dont do anything caz , we are "
+        "foolish to understand the game. Company will threaten CM and kannada people"
+    )
+    lang = detect_language(user_comment)
+    assert lang["language"] == "english"
+    assert lang["is_kannada"] is False
+    assert lang["display_name"] == "English"
+
+    pred = predict_comment(user_comment)
+    assert pred["status"] == "success"
+    assert pred["detected_language"] == "English"
+    assert pred["language_code"] == "english"
+

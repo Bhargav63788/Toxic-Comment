@@ -25,6 +25,7 @@ from src.kannada_analyzer import (
     predict_kannada_comment,
     get_kannada_context_analyzer
 )
+from src.emoji_analyzer import get_emoji_analyzer, compare_predictions
 
 _LOADED_ARTIFACTS = None
 
@@ -119,12 +120,15 @@ def generate_interpretation(is_toxic: bool, severity: str, flagged: List[str], p
 def predict_comment(
     raw_text: str,
     artifacts: Optional[Dict[str, Any]] = None,
-    threshold_overrides: Optional[Dict[str, float]] = None
+    threshold_overrides: Optional[Dict[str, float]] = None,
+    include_emojis: bool = True,
+    return_comparison: bool = False
 ) -> Dict[str, Any]:
     """
     Analyze comment and return structured multi-label classification results.
-    Considers the complete sentence, context, negation, and intent rather
-    than classifying based merely on isolated words.
+    Integrates full sentence context evaluation, linguistic negation, and
+    comprehensive emoji semantics (hostile gestures, violent threats, sarcasm,
+    repetition multipliers, and cultural Kannada idioms).
     """
     t_start = time.perf_counter()
 
@@ -153,8 +157,12 @@ def predict_comment(
     lang_info = detect_language(raw_text)
     is_kannada_lang = lang_info["is_kannada"]
 
+    # 2. Extract and analyze emojis
+    emoji_analyzer = get_emoji_analyzer()
+    emoji_analysis = emoji_analyzer.analyze(raw_text, language_info=lang_info)
+
+    # 3. Base Linguistic & ML Inference
     if is_kannada_lang:
-        # Kannada or Kanglish inference
         kn_artifacts = artifacts.get("kannada") if artifacts else None
         kn_res = predict_kannada_comment(
             raw_text=raw_text,
@@ -162,7 +170,6 @@ def predict_comment(
             threshold_overrides=threshold_overrides
         )
 
-        # If comment is mixed Kannada & English, also evaluate with English model
         if lang_info["language"] == "mixed":
             contextual_text = mark_negation_and_context(raw_text)
             if not contextual_text or not contextual_text.strip():
@@ -184,100 +191,118 @@ def predict_comment(
                 if l in en_eval["final_flags"]:
                     combined_flags.add(l)
 
-            flagged_labels = list(combined_flags)
-            adjusted_probs = combined_probs
-            is_toxic = kn_res["is_toxic"] or en_eval["final_is_toxic"]
-            context_eval = kn_res["context_eval"]
+            base_flagged_labels = list(combined_flags)
+            base_adjusted_probs = combined_probs
+            base_is_toxic = kn_res["is_toxic"] or en_eval["final_is_toxic"]
+            base_context_eval = kn_res["context_eval"]
             if en_eval.get("context_reasons"):
-                context_eval["context_reasons"].extend(en_eval["context_reasons"])
+                base_context_eval["context_reasons"].extend(en_eval["context_reasons"])
         else:
-            adjusted_probs = kn_res["adjusted_probs"]
-            flagged_labels = kn_res["flagged_labels"]
-            is_toxic = kn_res["is_toxic"]
-            context_eval = kn_res["context_eval"]
+            base_adjusted_probs = kn_res["adjusted_probs"]
+            base_flagged_labels = kn_res["flagged_labels"]
+            base_is_toxic = kn_res["is_toxic"]
+            base_context_eval = kn_res["context_eval"]
+    else:
+        # Standard English pipeline
+        contextual_text = mark_negation_and_context(raw_text)
+        if not contextual_text or not contextual_text.strip():
+            contextual_text = clean_text(raw_text) or "unparsed"
 
-        label_predictions = {}
+        vec = vectorizer.transform([contextual_text])
+        raw_probs = {}
         for label in labels:
-            prob = float(adjusted_probs[label])
-            thresh = float(thresholds.get(label, 0.35))
-            is_flagged = bool(label in flagged_labels)
+            clf = classifiers[label]
+            prob = float(clf.predict_proba(vec)[0, 1])
+            raw_probs[label] = prob
 
-            if prob >= 0.75:
-                risk = "High"
-            elif prob >= thresh:
-                risk = "Moderate"
-            elif prob >= 0.25:
-                risk = "Elevated"
+        base_context_eval = get_context_analyzer().evaluate(
+            raw_text=raw_text,
+            ml_probs=raw_probs,
+            ml_thresholds=thresholds
+        )
+        base_adjusted_probs = base_context_eval["adjusted_probs"]
+        base_flagged_labels = base_context_eval["final_flags"]
+        base_is_toxic = base_context_eval["final_is_toxic"]
+
+    # 4. Integrate Emoji Semantics, Combinations & Sarcasm into Final Verdict
+    adjusted_probs = dict(base_adjusted_probs)
+    flagged_labels = list(base_flagged_labels)
+    context_reasons = list(base_context_eval.get("context_reasons", []))
+
+    if include_emojis and emoji_analysis["has_emojis"]:
+        if emoji_analysis["is_emoji_only"]:
+            if emoji_analysis["label_overrides"]:
+                for l in labels:
+                    if l in emoji_analysis["label_overrides"]:
+                        adjusted_probs[l] = float(emoji_analysis["label_overrides"][l])
+                thresh_map = thresholds if not is_kannada_lang else artifacts.get("kannada", {}).get("thresholds", thresholds)
+                flagged_labels = [l for l in labels if adjusted_probs[l] >= thresh_map.get(l, 0.35)]
+                for r in emoji_analysis["context_reasons"]:
+                    if r not in context_reasons:
+                        context_reasons.append(r)
             else:
-                risk = "Low"
-
-            label_predictions[label] = {
-                "probability": round(prob, 4),
-                "percentage": round(prob * 100, 1),
-                "threshold": round(thresh, 2),
-                "flagged": is_flagged,
-                "risk_level": risk
-            }
-
-        severity = compute_severity(flagged_labels, adjusted_probs)
-        base_interp = generate_interpretation(is_toxic, severity, flagged_labels, adjusted_probs)
-        if context_eval.get("context_reasons"):
-            reasons_text = "; ".join(context_eval["context_reasons"])
-            interpretation = f"[{lang_info['display_name']}] {base_interp} Context Analysis: {reasons_text}."
+                for l in labels:
+                    adjusted_probs[l] = min(adjusted_probs.get(l, 0.0), 0.04)
+                flagged_labels = []
+                for r in emoji_analysis["context_reasons"]:
+                    if r not in context_reasons:
+                        context_reasons.append(r)
         else:
-            interpretation = f"[{lang_info['display_name']}] {base_interp}"
+            # Text + Emoji interaction
+            # Sarcasm inversion
+            if emoji_analysis["sarcasm_detected"]:
+                adjusted_probs["toxic"] = max(adjusted_probs.get("toxic", 0.0), emoji_analysis["label_deltas"]["toxic"])
+                adjusted_probs["insult"] = max(adjusted_probs.get("insult", 0.0), emoji_analysis["label_deltas"]["insult"])
+                if "toxic" not in flagged_labels:
+                    flagged_labels.append("toxic")
+                if "insult" not in flagged_labels:
+                    flagged_labels.append("insult")
+                for r in emoji_analysis["context_reasons"]:
+                    if r not in context_reasons:
+                        context_reasons.append(r)
 
-        inference_ms = round((time.perf_counter() - t_start) * 1000, 2)
-        cleaned_preview = clean_text(raw_text)[:120] + ("..." if len(clean_text(raw_text)) > 120 else "")
+            # Hostile / Violent / Obscene emojis
+            emoji_deltas = emoji_analysis["label_deltas"]
+            thresh_map = thresholds if not is_kannada_lang else artifacts.get("kannada", {}).get("thresholds", thresholds)
 
-        return {
-            "status": "success",
-            "is_toxic": is_toxic,
-            "classification": "Toxic" if is_toxic else "Non-Toxic",
-            "severity": severity,
-            "flagged_labels": flagged_labels,
-            "flagged_count": len(flagged_labels),
-            "predictions": label_predictions,
-            "interpretation": interpretation,
-            "context_analysis": context_eval,
-            "char_count": len(raw_text),
-            "word_count": len(raw_text.split()),
-            "cleaned_preview": cleaned_preview,
-            "inference_time_ms": inference_ms,
-            "detected_language": lang_info["display_name"],
-            "language_code": lang_info["language"]
-        }
+            for l in labels:
+                d = emoji_deltas.get(l, 0.0)
+                th = thresh_map.get(l, 0.35)
+                if d >= th:
+                    adjusted_probs[l] = max(adjusted_probs.get(l, 0.0), d)
+                    if adjusted_probs[l] >= th and l not in flagged_labels:
+                        flagged_labels.append(l)
+                elif d > 0.15:
+                    adjusted_probs[l] = min(1.0, round(adjusted_probs.get(l, 0.0) + d * 0.25, 4))
+                    if adjusted_probs[l] >= th and l not in flagged_labels:
+                        flagged_labels.append(l)
 
-    # 2. English inference (standard pipeline)
-    # Preprocessing with contextual text scoping
-    contextual_text = mark_negation_and_context(raw_text)
-    if not contextual_text or not contextual_text.strip():
-        contextual_text = clean_text(raw_text) or "unparsed"
+            # Mitigating positive emojis (when no hostile signals or attacks present)
+            if (
+                emoji_analysis["is_mitigating"]
+                and not base_context_eval.get("is_directed_attack")
+                and not base_context_eval.get("is_violent_threat")
+                and not emoji_analysis["sarcasm_detected"]
+            ):
+                for l in ["toxic", "insult", "severe_toxic"]:
+                    adjusted_probs[l] = min(adjusted_probs.get(l, 0.0), 0.20)
+                    if l in flagged_labels:
+                        flagged_labels.remove(l)
+                context_reasons.append("Friendly/positive emojis confirm constructive, non-hostile intention")
 
-    # ML Vectorization & raw inference
-    vec = vectorizer.transform([contextual_text])
+            for r in emoji_analysis.get("context_reasons", []):
+                if r not in context_reasons:
+                    context_reasons.append(r)
 
-    raw_probs = {}
-    for label in labels:
-        clf = classifiers[label]
-        prob = float(clf.predict_proba(vec)[0, 1])
-        raw_probs[label] = prob
+    is_toxic = len(flagged_labels) > 0
 
-    # Contextual sentence analysis to evaluate full meaning and prevent lone-word false positives
-    context_eval = get_context_analyzer().evaluate(
-        raw_text=raw_text,
-        ml_probs=raw_probs,
-        ml_thresholds=thresholds
-    )
-
-    adjusted_probs = context_eval["adjusted_probs"]
-    flagged_labels = context_eval["final_flags"]
-    is_toxic = context_eval["final_is_toxic"]
-
+    # 5. Format Label Predictions & 4 Severity Levels
     label_predictions = {}
+    thresh_map = thresholds if not is_kannada_lang else artifacts.get("kannada", {}).get("thresholds", thresholds)
+
     for label in labels:
         prob = float(adjusted_probs[label])
-        thresh = float(thresholds.get(label, 0.5))
+        thresh = float(thresh_map.get(label, 0.35))
         is_flagged = bool(label in flagged_labels)
 
         if prob >= 0.75:
@@ -299,16 +324,19 @@ def predict_comment(
 
     severity = compute_severity(flagged_labels, adjusted_probs)
     base_interp = generate_interpretation(is_toxic, severity, flagged_labels, adjusted_probs)
-    if context_eval.get("context_reasons"):
-        reasons_text = "; ".join(context_eval["context_reasons"])
-        interpretation = f"{base_interp} Context Analysis: {reasons_text}."
+
+    if context_reasons:
+        reasons_text = "; ".join(context_reasons)
+        interpretation = f"[{lang_info['display_name']}] {base_interp} Context Analysis: {reasons_text}."
     else:
-        interpretation = base_interp
+        interpretation = f"[{lang_info['display_name']}] {base_interp}"
 
     inference_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    cleaned_preview = clean_text(raw_text)[:120] + ("..." if len(clean_text(raw_text)) > 120 else "")
 
-    return {
+    result = {
         "status": "success",
+        "raw_text": raw_text,
         "is_toxic": is_toxic,
         "classification": "Toxic" if is_toxic else "Non-Toxic",
         "severity": severity,
@@ -316,14 +344,38 @@ def predict_comment(
         "flagged_count": len(flagged_labels),
         "predictions": label_predictions,
         "interpretation": interpretation,
-        "context_analysis": context_eval,
+        "context_analysis": {
+            "final_is_toxic": is_toxic,
+            "final_flags": flagged_labels,
+            "adjusted_probs": adjusted_probs,
+            "context_reasons": context_reasons,
+            "context_summary": "; ".join(context_reasons) if context_reasons else "Linguistic & Emoji Context Evaluation"
+        },
+        "has_emojis": emoji_analysis["has_emojis"],
+        "is_emoji_only": emoji_analysis["is_emoji_only"],
+        "sarcasm_detected": emoji_analysis["sarcasm_detected"],
+        "emojis_detected": emoji_analysis["emojis_detected"],
+        "emoji_analysis": emoji_analysis,
+        "emoji_ui_chips": emoji_analysis["ui_chips"],
         "char_count": len(raw_text),
         "word_count": len(raw_text.split()),
-        "cleaned_preview": contextual_text[:120] + ("..." if len(contextual_text) > 120 else ""),
+        "cleaned_preview": cleaned_preview,
         "inference_time_ms": inference_ms,
         "detected_language": lang_info["display_name"],
         "language_code": lang_info["language"]
     }
+
+    if return_comparison:
+        base_res = predict_comment(
+            raw_text=raw_text,
+            artifacts=artifacts,
+            threshold_overrides=threshold_overrides,
+            include_emojis=False,
+            return_comparison=False
+        )
+        result["model_comparison"] = compare_predictions(base_res, result)
+
+    return result
 
 
 if __name__ == "__main__":

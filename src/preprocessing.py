@@ -15,7 +15,11 @@ import numpy as np
 DEFAULT_LABELS = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
 
 
-def clean_text(text: Any) -> str:
+import emoji
+from src.emoji_analyzer import extract_emojis, has_emojis, is_emoji_only
+
+
+def clean_text(text: Any, preserve_emojis: bool = True) -> str:
     """
     Standardize and clean input comment text:
       - Decode HTML entities
@@ -24,6 +28,7 @@ def clean_text(text: Any) -> str:
       - Strip URLs and email addresses
       - Remove IP addresses (frequent in Wikipedia revision comments)
       - Strip non-alphabet characters while retaining standard contractions
+      - Preserve emojis (Unicode emoticons, symbols, pictographs)
       - Collapse multiple whitespace and trim
     """
     if text is None or pd.isna(text):
@@ -49,11 +54,27 @@ def clean_text(text: Any) -> str:
     # Remove usernames often in Wikipedia talk pages (e.g., [[User:Foo]])
     text = re.sub(r"\[\[user:[^\]]+\]\]", " ", text)
 
-    # Keep only letters (including Kannada script), digits, apostrophes and spaces
-    text = re.sub(r"[^a-z0-9\u0C80-\u0CFF'\s]", " ", text)
+    if preserve_emojis:
+        # Protect emojis with unique tokens during character stripping
+        em_list = emoji.emoji_list(text)
+        placeholders = {}
+        for i, m in enumerate(reversed(em_list)):
+            idx = len(em_list) - 1 - i
+            token = f" __emj_{idx}__ "
+            placeholders[token.strip()] = m["emoji"]
+            text = text[:m["match_start"]] + token + text[m["match_end"]:]
 
-    # Normalize contractions and apostrophes
-    text = re.sub(r"'+", "'", text)
+        # Keep letters (including Kannada script), digits, apostrophes, underscores, and spaces
+        text = re.sub(r"[^a-z0-9\u0C80-\u0CFF'_\s]", " ", text)
+        text = re.sub(r"'+", "'", text)
+
+        # Restore preserved emojis with clean spacing
+        for token, em in placeholders.items():
+            text = text.replace(token, f" {em} ")
+    else:
+        # Keep only letters (including Kannada script), digits, apostrophes and spaces
+        text = re.sub(r"[^a-z0-9\u0C80-\u0CFF'\s]", " ", text)
+        text = re.sub(r"'+", "'", text)
 
     # Collapse consecutive whitespace characters
     text = re.sub(r"\s+", " ", text).strip()

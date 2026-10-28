@@ -20,26 +20,25 @@
   <main class="page">
     <header class="heading">
       <div class="eyebrow-row">
-        <p class="eyebrow">YouTube Toxic Comment Detection</p>
-        <span class="lang-support-pill"><span class="lang-dot"></span> English &amp; ಕನ್ನಡ (Kannada) Supported</span>
+        <p class="eyebrow">YouTube Toxic Comment &amp; Emoji Intelligence System</p>
+        <span class="lang-support-pill"><span class="lang-dot"></span> English &amp; ಕನ್ನಡ (Kannada)</span>
+        <span class="lang-support-pill pill-emoji"><span class="lang-dot dot-emoji"></span> Emoji &amp; Sarcasm Intelligence</span>
       </div>
       <h1>YouTube Toxic Comment Analyzer</h1>
     </header>
 
-
-
     <!-- Main Link Input Form -->
     <form class="link-form" id="video-form" novalidate onsubmit="event.preventDefault(); startAnalysis();">
-      <input id="video-url" type="url" autocomplete="off"
-        placeholder="Paste a YouTube video link (e.g., https://www.youtube.com/watch?v=... or https://youtu.be/...)"
-        aria-label="YouTube video link" required>
-      <button type="submit" id="submit-btn">
-        <span id="btn-text">Analyze comments</span>
-      </button>
-    </form>
+        <input id="video-url" type="url" autocomplete="off"
+          placeholder="Paste a YouTube video link (e.g., https://www.youtube.com/watch?v=... or https://youtu.be/...)"
+          aria-label="YouTube video link" required>
+        <button type="submit" id="submit-btn">
+          <span id="btn-text">Analyze comments</span>
+        </button>
+      </form>
 
-    <!-- Status message -->
-    <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
+      <!-- Status message -->
+      <p class="form-message" id="form-message" role="status" aria-live="polite"></p>
 
     <!-- Two-Column Layout -->
     <section class="columns" aria-label="Video preview and comment analysis">
@@ -176,6 +175,31 @@
             </p>
           </div>
 
+          <!-- Emoji Toxicity Signals Strip -->
+          <div class="emoji-signals-strip" id="emoji-signals-strip" style="display: none;">
+            <div class="emoji-signal-header">
+              <span class="emoji-signal-title">&#129504; Emoji Toxicity &amp; Sarcasm Signals</span>
+              <span class="emoji-signal-badge">NLP + Multi-Label</span>
+            </div>
+            <div class="emoji-signal-metrics">
+              <div class="emoji-metric-chip">
+                <span>With Emojis</span>
+                <strong id="stat-emoji-total">0</strong>
+              </div>
+              <div class="emoji-metric-chip chip-toxic">
+                <span>Toxic Emojis</span>
+                <strong id="stat-emoji-toxic">0</strong>
+              </div>
+              <div class="emoji-metric-chip chip-sarcasm">
+                <span>Sarcasm Detected</span>
+                <strong id="stat-emoji-sarcasm">0</strong>
+              </div>
+            </div>
+            <div class="emoji-top-clusters" id="emoji-top-clusters">
+              <!-- Dynamically populated top emojis -->
+            </div>
+          </div>
+
           <!-- Comments Filter Bar -->
           <div class="filter-row">
             <div class="filter-buttons">
@@ -190,6 +214,9 @@
               </button>
               <button type="button" class="filter-tab tab-kannada" data-filter="kannada" onclick="setFilter('kannada')">
                 ಕನ್ನಡ (<span id="count-kannada">0</span>)
+              </button>
+              <button type="button" class="filter-tab tab-emoji" data-filter="emoji" onclick="setFilter('emoji')">
+                Emojis (<span id="count-emoji">0</span>)
               </button>
             </div>
           </div>
@@ -220,7 +247,7 @@
         </div>
 
       </article>
-    </section>
+  </section>
   </main>
 
   <footer class="page-footer">

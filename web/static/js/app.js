@@ -352,7 +352,44 @@ function renderAnalysisResults(data) {
   const countKnEl = document.getElementById("count-kannada");
   if (countKnEl) countKnEl.textContent = knCount;
 
-  // 5. Render Comment Cards
+  const emojiCount = (data.comments || []).filter(c => c.has_emojis).length;
+  const countEmojiEl = document.getElementById("count-emoji");
+  if (countEmojiEl) countEmojiEl.textContent = emojiCount;
+
+  // 5. Populate Emoji Toxicity Signals Strip
+  const emojiStats = data.emoji_stats || {};
+  const strip = document.getElementById("emoji-signals-strip");
+  if (strip) {
+    if (emojiStats.comments_with_emojis > 0) {
+      strip.style.display = "block";
+      const totalEl = document.getElementById("stat-emoji-total");
+      const toxicEl = document.getElementById("stat-emoji-toxic");
+      const sarcasmEl = document.getElementById("stat-emoji-sarcasm");
+      if (totalEl) totalEl.textContent = emojiStats.comments_with_emojis.toLocaleString();
+      if (toxicEl) toxicEl.textContent = (emojiStats.emoji_toxic_count || 0).toLocaleString();
+      if (sarcasmEl) sarcasmEl.textContent = (emojiStats.sarcasm_count || 0).toLocaleString();
+
+      const clustersDiv = document.getElementById("emoji-top-clusters");
+      if (clustersDiv) {
+        let clustersHtml = "";
+        if (emojiStats.top_toxic_emojis && emojiStats.top_toxic_emojis.length > 0) {
+          clustersHtml += `<span class="cluster-group"><span>Hostile Emojis:</span> ` +
+            emojiStats.top_toxic_emojis.map(e => `<span class="cluster-tag cluster-toxic">${e.emoji} x${e.count}</span>`).join(" ") +
+            `</span>`;
+        }
+        if (emojiStats.top_positive_emojis && emojiStats.top_positive_emojis.length > 0) {
+          clustersHtml += `<span class="cluster-group" style="margin-left: 12px;"><span>Positive Emojis:</span> ` +
+            emojiStats.top_positive_emojis.map(e => `<span class="cluster-tag cluster-positive">${e.emoji} x${e.count}</span>`).join(" ") +
+            `</span>`;
+        }
+        clustersDiv.innerHTML = clustersHtml;
+      }
+    } else {
+      strip.style.display = "none";
+    }
+  }
+
+  // 6. Render Comment Cards
   currentFilter = "all";
   updateFilterButtons();
   renderCommentsFeed(true);
@@ -361,13 +398,20 @@ function renderAnalysisResults(data) {
 function getFilteredComments() {
   if (!analysisData || !analysisData.comments) return [];
   if (currentFilter === "all") return analysisData.comments;
-  if (currentFilter === "toxic") return analysisData.comments.filter(c => c.is_toxic);
-  if (currentFilter === "clean") return analysisData.comments.filter(c => !c.is_toxic);
+  if (currentFilter === "toxic") {
+    return analysisData.comments.filter(c => c.is_toxic === true || c.classification === "Toxic");
+  }
+  if (currentFilter === "clean") {
+    return analysisData.comments.filter(c => c.is_toxic === false || c.classification === "Non-Toxic");
+  }
   if (currentFilter === "kannada") {
     return analysisData.comments.filter(c => {
       const l = (c.language || "").toLowerCase();
       return l.includes("kannada") || l.includes("ಕನ್ನಡ") || l.includes("mixed");
     });
+  }
+  if (currentFilter === "emoji") {
+    return analysisData.comments.filter(c => c.has_emojis === true);
   }
   return analysisData.comments;
 }
@@ -435,8 +479,10 @@ function renderCommentsFeed(reset = true) {
 }
 
 function createCommentCardElement(c) {
-  const isToxic = c.is_toxic;
+  const isToxic = (c.is_toxic === true || c.classification === "Toxic");
   const card = document.createElement("div");
+  card.id = `comment-${c.comment_id}`;
+  card.dataset.commentId = c.comment_id;
   card.className = `comment-card ${isToxic ? "is-toxic" : "is-clean"}`;
 
   const authorInitials = (c.author || "U").substring(0, 2).toUpperCase();
@@ -463,6 +509,43 @@ function createCommentCardElement(c) {
   }
   const langBadge = `<span class="badge-pill badge-lang ${langClass}" title="${escapeHtml(langLabel)}">${langShort}</span>`;
 
+  // 4 Severity levels: High, Medium/Moderate, Low/Mild, Clean
+  const severityStr = c.severity || (isToxic ? "Moderate Toxicity" : "Clean");
+  let sevClass = "severity-clean";
+  let sevLabel = "Clean";
+  if (severityStr.includes("High")) {
+    sevClass = "severity-high";
+    sevLabel = "High";
+  } else if (severityStr.includes("Moderate") || severityStr.includes("Medium")) {
+    sevClass = "severity-medium";
+    sevLabel = "Medium";
+  } else if (severityStr.includes("Mild") || severityStr.includes("Low")) {
+    sevClass = "severity-low";
+    sevLabel = "Low";
+  }
+  const sevBadge = `<span class="badge-severity ${sevClass}">${sevLabel}</span>`;
+
+  // Sarcasm Badge
+  const sarcasmBadge = c.sarcasm_detected ? `<span class="badge-sarcasm" title="Sarcastic mockery detected">🙃 Sarcasm</span>` : "";
+
+  // Emoji Only Badge
+  const emojiOnlyBadge = c.is_emoji_only ? `<span class="badge-pill" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">Emoji-Only</span>` : "";
+
+  // Detected Emojis Chips Row
+  let emojiChipsHtml = "";
+  if (c.emoji_ui_chips && c.emoji_ui_chips.length > 0) {
+    emojiChipsHtml = `<div class="comment-emoji-chips">` +
+      c.emoji_ui_chips.map(chip => {
+        let chipClass = "chip-neutral";
+        if (chip.category === "violent_threat") chipClass = "chip-threat";
+        else if (chip.is_toxic) chipClass = "chip-toxic";
+        else if (chip.category === "sarcastic_mockery") chipClass = "chip-sarcastic";
+        else if (chip.category === "positive_praise") chipClass = "chip-positive";
+        return `<span class="emoji-chip ${chipClass}" title="${escapeHtml(chip.name)}">${escapeHtml(chip.chip_text)}</span>`;
+      }).join("") +
+      `</div>`;
+  }
+
   card.innerHTML = `
     <div class="comment-card-top">
       <div class="comment-author-info">
@@ -472,6 +555,9 @@ function createCommentCardElement(c) {
       </div>
       <div class="comment-badges-group">
         ${langBadge}
+        ${sarcasmBadge}
+        ${emojiOnlyBadge}
+        ${sevBadge}
         <span class="badge-pill ${isToxic ? "toxic" : "clean"}">
           ${isToxic ? "Toxic" : "Non-Toxic"}
         </span>
@@ -479,6 +565,8 @@ function createCommentCardElement(c) {
     </div>
 
     <div class="comment-body">${escapeHtml(c.text)}</div>
+
+    ${emojiChipsHtml}
 
     <div class="comment-meta-bar">
       ${categoryTagsHtml}
@@ -537,5 +625,7 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+
 
 

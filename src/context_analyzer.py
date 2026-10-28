@@ -44,7 +44,9 @@ IDENTITY_WORDS = {
 INSULT_WORDS = {
     "idiot", "moron", "stupid", "dumb", "retard", "clown", "loser",
     "jerk", "asshole", "bitch", "bastard", "scumbag", "trash", "garbage",
-    "pig", "cunt", "ugly", "pathetic", "disgusting", "incompetent", "imbecile"
+    "pig", "cunt", "ugly", "pathetic", "disgusting", "incompetent", "imbecile",
+    "useless", "worthless", "failure", "hopeless", "freak", "scum", "creep",
+    "suck", "sucks", "annoying", "clueless", "horrible", "terrible", "shitty", "dumbass"
 }
 
 THREAT_WORDS = {
@@ -89,8 +91,18 @@ def mark_negation_and_context(text: Any) -> str:
         flags=re.IGNORECASE
     )
 
-    # 3. Propagate negation across clauses
-    raw_tokens = re.findall(r"[a-z0-9\u0C80-\u0CFF'_]+|[.,;:!?]", text.lower())
+    # 3. Propagate negation across clauses while preserving emojis
+    import emoji
+    em_list = emoji.emoji_list(text)
+    placeholders = {}
+    temp_text = text.lower()
+    for i, m in enumerate(reversed(em_list)):
+        idx = len(em_list) - 1 - i
+        token = f"emojitok{idx}"
+        placeholders[token] = m["emoji"]
+        temp_text = temp_text[:m["match_start"]] + f" {token} " + temp_text[m["match_end"]:]
+
+    raw_tokens = re.findall(r"[a-z0-9\u0C80-\u0CFF'_]+|[.,;:!?]", temp_text)
     tokens = []
     in_negation = False
 
@@ -107,7 +119,9 @@ def mark_negation_and_context(text: Any) -> str:
             tokens.append(tok)
             continue
 
-        if in_negation:
+        if tok in placeholders:
+            tokens.append(placeholders[tok])
+        elif in_negation:
             tokens.append(f"NOT_{tok}")
         else:
             tokens.append(tok)
@@ -185,7 +199,13 @@ class SentenceContextAnalyzer:
 
         # Directed personal attack (ensuring it is not preceded by negation)
         attack_match = re.search(
-            r"\b(you|u|ur|your)\s+(are|r|is|being)?\s*(a\s+|an\s+)?(complete|total|real|such\s+a|fucking)?\s*(idiot|moron|stupid|dumb|loser|bitch|bastard|asshole|clown|trash|garbage|jerk|cunt|pig)\b",
+            r"\b(you|u|ur|your)\s+(are|r|is|being|look|sound)?\s*(a\s+|an\s+)?(complete|total|real|such\s+a|fucking|absolute|so)?\s*(idiot|moron|stupid|dumb|loser|bitch|bastard|asshole|clown|trash|garbage|jerk|cunt|pig|useless|worthless|pathetic|failure|incompetent|disgusting|ugly|hopeless|scum|creep|horrible|terrible|shitty|dumbass|imbecile)\b",
+            text_clean
+        ) or re.search(
+            r"\b(you|u)\s+(suck|sucks|stink|have\s+no\s+(talent|brain|brains|sense|life|clue))\b",
+            text_clean
+        ) or re.search(
+            r"\b(what\s+an?|such\s+an?|good\s+job|nice\s+one|way\s+to\s+go)\s+(idiot|moron|stupid|loser|clown|failure|joke|disaster|dumbass)\b",
             text_clean
         )
         is_directed_attack = False
@@ -195,7 +215,7 @@ class SentenceContextAnalyzer:
             if not any(neg in prefix for neg in ["not", "never", "no", "don't", "dont", "didn't", "didnt", "isn't", "isnt"]):
                 is_directed_attack = True
 
-        if re.search(r"\b(shut\s+up|get\s+lost|kill\s+yourself|go\s+to\s+hell|fuck\s+off|fuck\s+you)\b", text_clean):
+        if re.search(r"\b(shut\s+up|get\s+lost|kill\s+yourself|go\s+to\s+hell|fuck\s+off|fuck\s+you|stfu)\b", text_clean):
             is_directed_attack = True
 
         # Directed violent threat
@@ -267,13 +287,14 @@ class SentenceContextAnalyzer:
                 if l in adjusted_flags:
                     adjusted_flags.remove(l)
 
-        # RULE 7: Lone-word trigger check (never classify based only on a single word without attack)
+        # RULE 7: Lone-word trigger check (mitigate single sensitive term in benign/descriptive contexts)
         if has_single_word_trigger and not is_directed_attack and not is_violent_threat:
-            if len(adjusted_flags) > 0 and len(found_insults) <= 1 and len(found_threats) == 0:
-                context_reasons.append("Single isolated word evaluated in sentence context without hostile intent")
-                adjusted_flags = []
-                for l in ml_probs:
-                    adjusted_probs[l] = min(adjusted_probs[l], ml_thresholds.get(l, 0.5) * 0.75)
+            if len(adjusted_flags) > 0 and len(found_insults) == 1 and len(found_threats) == 0:
+                if has_gratitude or has_praise_idiom or is_self_identity or is_descriptive or is_self_deprecating:
+                    context_reasons.append("Single isolated word evaluated in sentence context without hostile intent")
+                    adjusted_flags = []
+                    for l in ml_probs:
+                        adjusted_probs[l] = min(adjusted_probs[l], ml_thresholds.get(l, 0.5) * 0.75)
 
         # RULE 7: Confirm true targeted toxicity
         if is_directed_attack or is_violent_threat:
